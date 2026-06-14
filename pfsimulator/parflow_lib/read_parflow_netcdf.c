@@ -1,25 +1,30 @@
-/*BHEADER*********************************************************************
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 /*****************************************************************************
 *
 * Routines to read a Vector from a distributed file.
@@ -34,8 +39,6 @@
 #include <string.h>
 #include <unistd.h>
 
-
-
 void ReadPFNC(char *fileName, Vector *v, char *varName, int tStep, int dimensionality)
 {
 #ifdef PARFLOW_HAVE_NETCDF
@@ -44,27 +47,24 @@ void ReadPFNC(char *fileName, Vector *v, char *varName, int tStep, int dimension
   Subgrid        *subgrid;
   Subvector      *subvector;
 
-  int num_chars, g;
-  int p, P;
+  int g;
 
-  amps_File file;
+  int ncRID;
 
-  double X, Y, Z;
-  int NX, NY, NZ;
-  double DX, DY, DZ;
-  int ncRID, varID;
-
+  BeginTiming(NetcdfTimingIndex);
 
   OpenNCFile(fileName, &ncRID);
+
   ForSubgridI(g, subgrids)
   {
     subgrid = SubgridArraySubgrid(subgrids, g);
     subvector = VectorSubvector(v, g);
-    ReadNCFile(ncRID, varID, subvector, subgrid, varName, tStep, dimensionality);
+    ReadNCFile(fileName, ncRID, subvector, subgrid, varName, tStep, dimensionality);
   }
   nc_close(ncRID);
-}
 
+  EndTiming(NetcdfTimingIndex);
+}
 
 void OpenNCFile(char *file_name, int *ncRID)
 {
@@ -92,51 +92,49 @@ void OpenNCFile(char *file_name, int *ncRID)
       MPI_Info_set(romio_info, romio_key, value);
     }
     int res = nc_open_par(file_name, NC_MPIIO, amps_CommWorld, romio_info, ncRID);
+    if (res != NC_NOERR)
+    {
+      amps_Printf("Error: nc_open_par failed for file <%s>\n", file_name);
+    }
   }
   else
   {
     int res = nc_open_par(file_name, NC_MPIIO, amps_CommWorld, MPI_INFO_NULL, ncRID);
+    if (res != NC_NOERR)
+    {
+      amps_Printf("Error: nc_open_par failed for file <%s>\n", file_name);
+    }
   }
 #else
   amps_Printf("Parflow not compiled with NetCDF, can't read NetCDF file\n");
 #endif
 }
 
-void ReadNCFile(int ncRID, int varID, Subvector *subvector, Subgrid *subgrid, char *varName, int tStep, int dimensionality)
+void ReadNCFile(char* filename, int ncRID, Subvector *subvector, Subgrid *subgrid, char *varName, int tStep, int dimensionality)
 {
 #ifdef PARFLOW_HAVE_NETCDF
-  //nc_inq_varid(ncRID, "pressure", &varID);
+  int varID;
   nc_inq_varid(ncRID, varName, &varID);
 
+  int time_index = tStep;
 
-  int ix = SubgridIX(subgrid);
-  int iy = SubgridIY(subgrid);
-  int iz = SubgridIZ(subgrid);
+  if (tStep < 0)
+  {
+    unsigned long end[MAX_NC_VARS];
+    find_variable_length(ncRID, varID, end);
 
-  int nx = SubgridNX(subgrid);
-  int ny = SubgridNY(subgrid);
-  int nz = SubgridNZ(subgrid);
+    time_index = end[0] + tStep;
 
-  int nx_v = SubvectorNX(subvector);
-  int ny_v = SubvectorNY(subvector);
-  int nz_v = SubvectorNZ(subvector);
-
-  int i, j, k, d, ai;
-
-  size_t startp[4];
-  size_t countp[4];
-
-  double *data;
-  double *nc_data;
-  nc_data = (double*)malloc(sizeof(double) * nx * ny * nz);
-
-  (void)subgrid;
+    if (time_index < 0)
+    {
+      char buffer[2048];
+      snprintf(buffer, 2048, "Negative index provided (%d) into NetCDF file (%s) is larger than number of timesteps present in file", time_index, filename);
+      PARFLOW_ERROR(buffer);
+    }
+  }
 
   if (dimensionality == 3)
   {
-    nc_inq_varid(ncRID, varName, &varID);
-
-
     int ix = SubgridIX(subgrid);
     int iy = SubgridIY(subgrid);
     int iz = SubgridIZ(subgrid);
@@ -159,7 +157,7 @@ void ReadNCFile(int ncRID, int varID, Subvector *subvector, Subgrid *subgrid, ch
     nc_data = (double*)malloc(sizeof(double) * nx * ny * nz);
 
     (void)subgrid;
-    startp[0] = tStep, countp[0] = 1;
+    startp[0] = time_index, countp[0] = 1;
     startp[1] = iz, countp[1] = nz;
     startp[2] = iy, countp[2] = ny;
     startp[3] = ix, countp[3] = nx;
@@ -191,9 +189,6 @@ void ReadNCFile(int ncRID, int varID, Subvector *subvector, Subgrid *subgrid, ch
   }
   else if (dimensionality == 2)
   {
-    nc_inq_varid(ncRID, varName, &varID);
-
-
     int ix = SubgridIX(subgrid);
     int iy = SubgridIY(subgrid);
     int iz = SubgridIZ(subgrid);
@@ -215,8 +210,7 @@ void ReadNCFile(int ncRID, int varID, Subvector *subvector, Subgrid *subgrid, ch
     double *nc_data;
     nc_data = (double*)malloc(sizeof(double) * nx * ny * nz);
 
-    (void)subgrid;
-    startp[0] = tStep, countp[0] = 1;
+    startp[0] = time_index, countp[0] = 1;
     startp[1] = iy, countp[1] = ny;
     startp[2] = ix, countp[2] = nx;
 
@@ -244,6 +238,10 @@ void ReadNCFile(int ncRID, int varID, Subvector *subvector, Subgrid *subgrid, ch
     });
 
     free(nc_data);
+  }
+  else
+  {
+    PARFLOW_ERROR("Invalid dimension in ReadNCFile");
   }
 #else
   amps_Printf("Parflow not compiled with NetCDF, can't read NetCDF file\n");

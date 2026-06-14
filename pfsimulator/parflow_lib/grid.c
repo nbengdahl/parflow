@@ -1,30 +1,30 @@
-/*BHEADER*********************************************************************
- *
- *  Copyright (c) 1995-2009, Lawrence Livermore National Security,
- *  LLC. Produced at the Lawrence Livermore National Laboratory. Written
- *  by the Parflow Team (see the CONTRIBUTORS file)
- *  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 /*****************************************************************************
 *
 * Member functions for Grid class.
@@ -33,6 +33,7 @@
 
 #include "parflow.h"
 #include "grid.h"
+#include <stdbool.h>
 
 #include <math.h>
 
@@ -977,4 +978,76 @@ SubgridArray  *UnionSubgridArray(
 
   return new_sa;
 }
+
+
+/** @brief Checks whether a subgrid intersects with the current ranks subgrid
+ *
+ * @param subgrid the subgrid we are checking
+ * @param grid the problems grid
+ * @return True or False corresponding to whether the subgrid intersects
+ */
+bool SubgridIntersectsCurrentRank(Subgrid* subgrid, Grid *grid)
+{
+  int subgrid_index;
+  Subgrid* rank_subgrid, *tmp_subgrid;
+
+  ForSubgridI(subgrid_index, GridSubgrids(grid))
+  {
+    rank_subgrid = SubgridArraySubgrid(GridSubgrids(grid), subgrid_index);
+    if ((tmp_subgrid = IntersectSubgrids(rank_subgrid, subgrid)))
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** @brief This will calculate the volume of a subgrid that lies on this rank
+ *
+ * This function calculates the volume of a subgrid. This volume will be only the volume
+ * that lies on this rank. It also accounts for var-dz, which using the simple
+ * nx*dx*ny*dy*nz*dz does not.
+ *
+ * @param subgrid The subgrid in question that we are calculating the volume of
+ * @param problem_data Expects the general problem data instance
+ *
+ * @return The subgrid volume
+ */
+double CalculateLocalSubgridVolume(Subgrid *subgrid, ProblemData* problem_data)
+{
+  {
+    double dx = SubgridDX(subgrid);
+    double dy = SubgridDY(subgrid);
+    double dz = SubgridDZ(subgrid);
+    GrGeomSolid *gr_domain = problem_data->gr_domain;
+
+    double volume = 0;
+    SubgridArray   *subgrids = problem_data->dz_mult->grid->subgrids;
+    Subgrid        *tmp_subgrid;
+    int subgrid_index;
+
+    ForSubgridI(subgrid_index, subgrids)
+    {
+      tmp_subgrid = SubgridArraySubgrid(subgrids, subgrid_index);
+      Subvector *dz_mult_subvector = VectorSubvector(problem_data->dz_mult, subgrid_index);
+      double* dz_mult_data = SubvectorData(dz_mult_subvector);
+      Subgrid *intersection = IntersectSubgrids(subgrid, tmp_subgrid);
+      int nx = SubgridNX(intersection);
+      int ny = SubgridNY(intersection);
+      int nz = SubgridNZ(intersection);
+      int r = SubgridRZ(intersection);
+      int ix = SubgridIX(intersection);
+      int iy = SubgridIY(intersection);
+      int iz = SubgridIZ(intersection);
+      int i, j, k;
+      GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
+      {
+        int index = SubvectorEltIndex(dz_mult_subvector, i, j, k);
+        double dz_mult = dz_mult_data[index];
+        volume += dz_mult * dx * dy * dz;
+      });
+    }
+    return volume;
+  };
+};
 

@@ -15,7 +15,8 @@
 
 OPTIND=1         # Reset in case getopts has been used previously in the shell.
 
-UNCRUSTIFY_VERSION='0.67'
+UNCRUSTIFY_VERSION='0.79.0'
+BLACK_VERSION='26.3.1'
 
 # Exit script
 # $1 (required): Message to print on exit
@@ -64,6 +65,9 @@ function parse_params() {
             -v|--verbose)
                 verbose=true
                 ;;
+            -c|--check)
+                check=true
+                ;;
             *)
                 script_exit "Invalid parameter was provided: $param" 2
                 ;;
@@ -71,30 +75,107 @@ function parse_params() {
     done
 }
 
+function check_black_version() {
+   # Check if black is available as a command
+   if ! command -v pfpython -m black >/dev/null 2>&1; then
+      script_exit "black is not installed"
+   fi
+
+   # Get the installed version
+   version="$(pfpython -m black --version 2>/dev/null | awk '{print $4}')"
+
+   if [ "$version" != "$BLACK_VERSION" ]; then
+      script_exit "Python black package must be version ${BLACK_VERSION}, found ${version}"
+   fi
+}
+
 function check_version() {
-   version=$(uncrustify --version)
-   case ${version} in
-      *${UNCRUSTIFY_VERSION}*)
+   if command -v "uncrustify" &>/dev/null; then
+      version=$(uncrustify --version)
+      case ${version} in
+	 *${UNCRUSTIFY_VERSION}*)
 	 ;;
-      *)
-	 script_exit "Uncrustify must be version ${UNCRUSTIFY_VERSION}"
-	 ;;
-   esac
+	 *)
+	    script_exit "Uncrustify must be version ${UNCRUSTIFY_VERSION}, found ${version}"
+	    ;;
+      esac
+   else
+      echo "uncrustify not found."
+      exit 1
+   fi
+}
+
+function log () {
+    if $verbose ; then
+        printf "$@"
+    fi
 }
 
 function main() {
 
-   parse_params "$@"
+   verbose=false
+   check=false
 
+   parse_params "$@"
+   
    check_version
 
-   files=$(find . -name \*.[ch] | grep -v './build')
-   for i in $files
+   check_black_version 
+
+   failed=false
+
+   for i in $(find . -name \*.[ch] | grep -v './build\|third_party\|./py-env')
    do
-      uncrustify -l C --replace --no-backup -c bin/parflow.cfg $i 
+      if $check
+      then
+	 if output=$(uncrustify --check -c bin/parflow.cfg $i 2>&1)
+	 then
+	    log 'pfformat PASSED %s\n' $i
+	 else
+	    printf 'pfFormat FAILED\nUncrustify output was «%s»\n' "$output\n"
+	    failed=true
+	 fi
+      else
+	 uncrustify --if-changed --replace --no-backup -c bin/parflow.cfg $i
+      fi
    done
+
+   if $check
+   then
+      if output=$($PARFLOW_DIR/bin/pfpython -m black . --check 2>&1)
+      then
+	 log 'pfformat PASSED %s\n' $i
+      else
+	 printf 'pfFormat FAILED\nPython black output was «%s»\n' "$output\n"
+	 failed=true
+      fi
+   else
+      $PARFLOW_DIR/bin/pfpython -m black .
+   fi
+
+   if $check
+   then
+      if output=$($PARFLOW_DIR/bin/pfpython -m gersemi . --check 2>&1)
+      then
+	 log 'pfformat PASSED %s\n' $i
+      else
+	 printf 'pfFormat FAILED\nCMake style checker gersemi output was «%s»\n' "$output\n"
+	 failed=true
+      fi
+   else
+      $PARFLOW_DIR/bin/pfpython -m gersemi --in-place .
+   fi
+
+   if $check
+   then
+      if $failed ;
+      then
+	 printf 'pfFormat style check : FAILED\n'
+	 exit 1
+      else
+	 printf 'pfFormat style check : PASSED\n'
+      fi
+   fi
 }
 
 main "$@"
-
-

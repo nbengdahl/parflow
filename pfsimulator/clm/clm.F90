@@ -1,19 +1,32 @@
 !#include <misc.h>
 
-subroutine clm_lsm(pressure,saturation,evap_trans,topo,porosity,pf_dz_mult,istep_pf,dt,time,           &
+subroutine clm_lsm(pressure,saturation,evap_trans,top,bottom,porosity,pf_dz_mult,istep_pf,dt,time,           &
 start_time,pdx,pdy,pdz,ix,iy,nx,ny,nz,nx_f,ny_f,nz_f,nz_rz,ip,npp,npq,npr,gnx,gny,rank,sw_pf,lw_pf,    &
 prcp_pf,tas_pf,u_pf,v_pf,patm_pf,qatm_pf,lai_pf,sai_pf,z0m_pf,displa_pf,                               &
+slope_x_pf,slope_y_pf,                                                                                 &
 eflx_lh_pf,eflx_lwrad_pf,eflx_sh_pf,eflx_grnd_pf,                                                     &
 qflx_tot_pf,qflx_grnd_pf,qflx_soi_pf,qflx_eveg_pf,qflx_tveg_pf,qflx_in_pf,swe_pf,t_g_pf,               &
 t_soi_pf,clm_dump_interval,clm_1d_out,clm_forc_veg,clm_output_dir,clm_output_dir_length,clm_bin_output_dir,         &
-write_CLM_binary,beta_typepf,veg_water_stress_typepf,wilting_pointpf,field_capacitypf,                 &
+write_CLM_binary,slope_accounting_CLM,beta_typepf,veg_water_stress_typepf,wilting_pointpf,field_capacitypf,                 &
 res_satpf,irr_typepf, irr_cyclepf, irr_ratepf, irr_startpf, irr_stoppf, irr_thresholdpf,               &
 qirr_pf,qirr_inst_pf,irr_flag_pf,irr_thresholdtypepf,soi_z,clm_next,clm_write_logs,                    &
-clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
+clm_last_rst,clm_daily_rst,rz_water_stress_typepf, pf_nlevsoi, pf_nlevlak,                            &
+snow_partition_typepf,tw_thresholdpf,thin_snow_dampingpf,thin_snow_thresholdpf,                       &
+snow_tcritpf,snow_t_lowpf,snow_t_highpf,snow_transition_widthpf,                                     &
+dai_apf,dai_bpf,dai_cpf,dai_dpf,jennings_apf,jennings_bpf,jennings_gpf,                              &
+sza_snow_dampingpf,sza_damping_coszen_refpf,sza_damping_coszen_minpf,                                 &
+albedo_schemepf,albedo_vis_newpf,albedo_nir_newpf,albedo_minpf,                                        &
+albedo_decay_vispf,albedo_decay_nirpf,albedo_accum_apf,albedo_thaw_apf,                               &
+frac_sno_typepf,frac_sno_roughnesspf,frac_sno_roughness_minpf,frac_sno_roughness_maxpf,        &
+frac_sno_gamma_szapf,frac_sno_tau_szapf,                                                          &
+snowage_tau0_vispf,snowage_tau0_nirpf,snowage_grain_growth_vispf,snowage_grain_growth_nirpf,        &
+snowage_dirt_soot_vispf,snowage_dirt_soot_nirpf,snowage_reset_factorpf,                                    &
+interception_fpi_maxpf,fwet_exponentpf,stomata_schemepf,                                     &
+interception_schemepf,interception_tanh_alphapf)
 
   !=========================================================================
   !
-  !  CLMCLMCLMCLMCLMCLMCLMCLMCL  A community developed and sponsored, freely   
+  !  CLMCLMCLMCLMCLMCLMCLMCLMCL  A community developed and sponsored, freely
   !  L                        M  available land surface process model.  
   !  M --COMMON LAND MODEL--  C  	
   !  C                        L  CLM WEB INFO: http://clm.gsfc.nasa.gov
@@ -54,17 +67,18 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
 
   ! basic indices, counters
   integer  :: t                                   ! tile space counter
-  integer  :: l                                   ! layer counter 
+  integer  :: l,ll                                ! layer counter 
   integer  :: r,c                                 ! row,column indices
   integer  :: ierr                                ! error output 
 
   ! values passed from parflow
   integer  :: nx,ny,nz,nx_f,ny_f,nz_f,nz_rz
-  integer  :: soi_z                               ! NBE: Specify layer shold be used for reference temperature
+  integer  :: soi_z                               ! NBE: Specify layer should be used for reference temperature
   real(r8) :: pressure((nx+2)*(ny+2)*(nz+2))     ! pressure head, from parflow on grid w/ ghost nodes for current proc
   real(r8) :: saturation((nx+2)*(ny+2)*(nz+2))   ! saturation from parflow, on grid w/ ghost nodes for current proc
   real(r8) :: evap_trans((nx+2)*(ny+2)*(nz+2))   ! ET flux from CLM to ParFlow on grid w/ ghost nodes for current proc
-  real(r8) :: topo((nx+2)*(ny+2)*(nz+2))         ! mask from ParFlow 0 for inactive, 1 for active, on grid w/ ghost nodes for current proc
+  real(r8) :: top((nx+2)*(ny+2)*(3))             ! top Z index from ParFlow, -1 for inactive, on grid w/ ghost nodes for current proc
+  real(r8) :: bottom((nx+2)*(ny+2)*(3))          ! bottom Z index from ParFlow, -1 for inactive, on grid w/ ghost nodes for current proc
   real(r8) :: porosity((nx+2)*(ny+2)*(nz+2))     ! porosity from ParFlow, on grid w/ ghost nodes for current proc
   real(r8) :: pf_dz_mult((nx+2)*(ny+2)*(nz+2))   ! dz multiplier from ParFlow on PF grid w/ ghost nodes for current proc
   real(r8) :: dt                                 ! parflow dt in parflow time units not CLM time units
@@ -115,18 +129,23 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
   real(r8) :: qirr_pf((nx+2)*(ny+2)*3)           ! irrigation applied above ground -- spray or drip (2D)
   real(r8) :: qirr_inst_pf((nx+2)*(ny+2)*(pf_nlevsoi+2))! irrigation applied below ground -- 'instant' (3D)
 
+  real(r8) :: slope_x_pf((nx+2)*(ny+2)*3)        ! Slope in x-direction from PF
+  real(r8) :: slope_y_pf((nx+2)*(ny+2)*3)        ! Slope in y-direction from PF
+
   ! output keys
-  real(r8) :: clm_dump_interval                  ! dump inteval for CLM output, passed from PF, always in interval of CLM timestep, not time
+  integer :: clm_dump_interval                  ! dump interval for CLM output, passed from PF, always in interval of CLM timestep, not time
   integer  :: clm_1d_out                         ! whether to dump 1d output 0=no, 1=yes
   integer  :: clm_forc_veg                       ! BH: whether vegetation (LAI, SAI, z0m, displa) is being forced 0=no, 1=yes
   integer  :: clm_output_dir_length              ! for output directory
   integer  :: clm_bin_output_dir                 ! output directory
   integer  :: write_CLM_binary                   ! whether to write CLM output as binary 
+  integer  :: slope_accounting_CLM               ! account for slope is solar zenith angle calculations
   character (LEN=clm_output_dir_length) :: clm_output_dir ! output dir location
 
   ! ET keys
   integer  :: beta_typepf                        ! beta formulation for bare soil Evap 0=none, 1=linear, 2=cos
   integer  :: veg_water_stress_typepf            ! veg transpiration water stress formulation 0=none, 1=press, 2=sm
+  integer  :: rz_water_stress_typepf             ! RZ transpiration limit formulation 0=none, 1=distributed discussed in Ferguson, Jefferson et al EES 2016
   real(r8) :: wilting_pointpf                    ! wilting point in m if press-type, in saturation if soil moisture type
   real(r8) :: field_capacitypf                   ! field capacity for water stress same as units above
   real(r8) :: res_satpf                          ! residual saturation from ParFlow
@@ -140,15 +159,72 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
   real(r8) :: irr_thresholdpf                    ! irrigation threshold criteria for deficit cycle (units of soil moisture content)
   integer  :: irr_thresholdtypepf                ! irrigation threshold criteria type -- top layer, bottom layer, column avg
 
+  ! snow parameterization keys @RMM 2025
+  integer  :: snow_partition_typepf              ! rain-snow partition: 0=CLM, 1=wb thresh, 2=wb lin, 3=Dai, 4=Jennings
+  real(r8) :: tw_thresholdpf                     ! wetbulb temperature threshold for snow [K]
+  real(r8) :: thin_snow_dampingpf                ! thin snow energy damping factor [0-1]
+  real(r8) :: thin_snow_thresholdpf              ! SWE threshold for damping [kg/m2]
+  real(r8) :: snow_tcritpf                       ! initial T classification threshold above tfrz [K], default 2.5
+  real(r8) :: snow_t_lowpf                       ! CLM method lower T threshold [K], default 273.16
+  real(r8) :: snow_t_highpf                      ! CLM method upper T threshold [K], default 275.16
+  real(r8) :: snow_transition_widthpf            ! WetbulbLinear half-width [K], default 1.0
+  real(r8) :: dai_apf                            ! Dai (2008) coefficient a, default -48.2292
+  real(r8) :: dai_bpf                            ! Dai (2008) coefficient b, default 0.7205
+  real(r8) :: dai_cpf                            ! Dai (2008) coefficient c, default 1.1662
+  real(r8) :: dai_dpf                            ! Dai (2008) coefficient d, default 1.0223
+  real(r8) :: jennings_apf                       ! Jennings (2018) intercept, default -10.04
+  real(r8) :: jennings_bpf                       ! Jennings (2018) T coefficient, default 1.41
+  real(r8) :: jennings_gpf                       ! Jennings (2018) RH coefficient, default 0.09
+
+  ! SZA snow damping keys @RMM 2025
+  real(r8) :: sza_snow_dampingpf                 ! SZA damping factor [0-1], 1.0=disabled
+  real(r8) :: sza_damping_coszen_refpf           ! reference coszen for damping onset
+  real(r8) :: sza_damping_coszen_minpf           ! coszen at max damping
+
+  ! snow albedo parameterization keys @RMM 2025
+  integer  :: albedo_schemepf                    ! albedo scheme: 0=CLM, 1=VIC, 2=Tarboton
+  real(r8) :: albedo_vis_newpf                   ! fresh snow VIS albedo [0-1]
+  real(r8) :: albedo_nir_newpf                   ! fresh snow NIR albedo [0-1]
+  real(r8) :: albedo_minpf                       ! minimum albedo floor [0-1]
+  real(r8) :: albedo_decay_vispf                 ! VIS decay coefficient [0-1]
+  real(r8) :: albedo_decay_nirpf                 ! NIR decay coefficient [0-1]
+  real(r8) :: albedo_accum_apf                   ! VIC cold-phase decay base
+  real(r8) :: albedo_thaw_apf                    ! VIC melt-phase decay base
+
+  ! frac_sno parameterization keys @RMM 2025
+  integer  :: frac_sno_typepf                    ! frac_sno scheme: 0=CLM (default), 1=SZA
+  real(r8) :: frac_sno_roughnesspf               ! roughness length for frac_sno [m] (case 0)
+  real(r8) :: frac_sno_roughness_minpf           ! min roughness for SZA interp [m] (case 1)
+  real(r8) :: frac_sno_roughness_maxpf           ! max roughness for SZA interp [m] (case 1)
+  real(r8) :: frac_sno_gamma_szapf               ! SZA power-law exponent [-] (case 1)
+  real(r8) :: frac_sno_tau_szapf                 ! EMA smoothing window [hours]
+
+  ! snow age VIS/NIR separation keys @RMM 2025
+  real(r8) :: snowage_tau0_vispf                 ! VIS e-folding time [s]
+  real(r8) :: snowage_tau0_nirpf                 ! NIR e-folding time [s]
+  real(r8) :: snowage_grain_growth_vispf         ! VIS grain growth factor [K]
+  real(r8) :: snowage_grain_growth_nirpf         ! NIR grain growth factor [K]
+  real(r8) :: snowage_dirt_soot_vispf            ! VIS dirt/soot factor [-]
+  real(r8) :: snowage_dirt_soot_nirpf            ! NIR dirt/soot factor [-]
+  real(r8) :: snowage_reset_factorpf             ! fresh snow reset factor [-]
+
+  ! ET formulation improvements @RMM 2026
+  real(r8) :: interception_fpi_maxpf             ! max interception fraction coeff [-]
+  real(r8) :: fwet_exponentpf                    ! power-law exponent for wet canopy [-]
+  integer  :: stomata_schemepf                   ! stomatal model: 0=BallBerry, 1=Medlyn
+  integer  :: interception_schemepf              ! interception: 0=CLM3, 1=CLM5Tanh
+  real(r8) :: interception_tanh_alphapf          ! CLM5 tanh scaling coeff [-]
+
   ! local indices & counters
   integer  :: i,j,k,k1,j1,l1                     ! indices for local looping
   integer  :: bj,bl                              ! indices for local looping !BH
 
   integer  :: j_incr,k_incr                      ! increment for j and k to convert 1D vector to 3D i,j,k array
-  integer, allocatable :: counter(:,:) 
   real(r8) :: total
   character*100 :: RI
-  real(r8) :: u         ! Tempoary UNDEF Variable  
+  real(r8) :: u         ! Tempoary UNDEF Variable
+
+  real(r8) pf_porosity(pf_nlevsoi)  !porosity from PF, replaces watsat clm var
 
   save
 
@@ -197,7 +273,6 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
   end if ! CLM log
 
      !=== Allocate Memory for Grid Module
-     allocate( counter(nx,ny) )
      allocate (grid(drv%nc,drv%nr),stat=ierr) ; call drv_astp(ierr) 
      do r=1,drv%nr                              ! rows
         do c=1,drv%nc                           ! columns
@@ -311,41 +386,40 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
      if (clm_write_logs==1) write(999,*) "Initialize CLM and DIAG variables"
      do t=1,drv%nch 
         clm%kpatch = t
-        call drv_clmini (drv, grid, tile(t), clm(t), istep_pf) !Initialize CLM Variables
-     enddo
 
-     !=== Initialize the CLM topography mask 
-     !    This is two components: 
-     !    1) a x-y mask of 0 o 1 for active inactive and 
-     !    2) a z/k mask that takes three values 
-     !      (1)= top of LS/PF domain 
-     !      (2)= top-nlevsoi and 
-     !      (3)= the bottom of the LS/PF domain.
-     if (clm_write_logs==1) write(999,*) "Initialize the CLM topography mask"
-
-     do t=1,drv%nch
+        !=== Initialize the CLM topography mask  @RMM  moved up from loop below
+        !    This is two components:
+        !    1) a x-y mask of 0 o 1 for active inactive and
+        !    2) a z/k mask that takes three values
+        !      (1)= top of LS/PF domain
+        !      (2)= top-nlevsoi and
+        !      (3)= the bottom of the LS/PF domain.
+        if (clm_write_logs==1 .and. t==1) write(999,*) "Initialize the CLM topography mask"
 
         i=tile(t)%col
         j=tile(t)%row
-        counter(i,j) = 0
         clm(t)%topo_mask(3) = 1
 
-        do k = nz, 1, -1 ! PF loop over z
-           l = 1+i + (nx+2)*(j) + (nx+2)*(ny+2)*(k)
-           if (topo(l) > 0) then
-              counter(i,j) = counter(i,j) + 1
-              if (counter(i,j) == 1) then 
-                 clm(t)%topo_mask(1) = k
-                 clm(t)%planar_mask = 1
-              end if
-           endif
-
-           if (topo(l) == 0 .and. topo(l+k_incr) > 0) clm(t)%topo_mask(3) = k+1
-
-        enddo ! k
-
+        l = 1+i + j_incr*(j) + k_incr
+        if (top(l) > 0) then
+           clm(t)%topo_mask(1) = 1+top(l)
+           clm(t)%topo_mask(3) = 1+bottom(l)
+           clm(t)%planar_mask = 1
+        endif
         clm(t)%topo_mask(2) = clm(t)%topo_mask(1)-nlevsoi
 
+        ! set clm watsat, tksatu from PF porosity
+        do k = 1, nlevsoi ! loop over clm soil layers (1->nlevsoi)
+           ! convert clm space to parflow space, note that PF space has ghost nodes
+           l = 1+i + j_incr*(j) + k_incr*(clm(t)%topo_mask(1)-(k-1))
+           ! put ParFlow porosity in a temp variable passed to clm_ini
+           pf_porosity(k)       = porosity(l)
+           !print*, 'k=',k,'l=',l,'porosity=',porosity(l),'pf_poro=',pf_porosity(k)
+
+           !clm(t)%tksatu(k)       = clm(t)%tkmg(k)*0.57**clm(t)%watsat(k)
+        end do !k
+
+        call drv_clmini (drv, grid, pf_porosity,tile(t), clm(t), istep_pf, clm_forc_veg) !Initialize CLM Variables
      enddo ! t
 
      !=== IMF:
@@ -367,7 +441,7 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
 
         i = tile(t)%col
         j = tile(t)%row
-		
+
 		!!!! BH: modification of the interfaces depths and layers thicknesses to match PF definitions
 	    clm(t)%zi(0)            = 0.   
     
@@ -387,9 +461,11 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
                     l1          = 1+i + j_incr*(j) + k_incr*(clm(t)%topo_mask(1)-(k1-1))
                     total       = total + (drv%dz * pf_dz_mult(l1))
                  enddo
-                 clm%z(k)       = total + (0.5 * drv%dz * pf_dz_mult(l))
-		clm%zi(k)	= total + drv%dz * pf_dz_mult(l)! basile
+                 clm(t)%z(k)       = total + (0.5 * drv%dz * pf_dz_mult(l))
+		clm(t)%zi(k)	= total + drv%dz * pf_dz_mult(l)! basile
+ 
               endif
+    
            enddo
 
 
@@ -447,7 +523,22 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
 		   endif ! active/inactive
 
      enddo !t 
-           
+   
+   !! Loop over the tile space to assign slopes
+
+      do t=1,drv%nch
+
+        i=tile(t)%col
+        j=tile(t)%row
+      ll =  (1+i) + (nx+2)*(j) + (nx+2)*(ny+2)
+      if (slope_accounting_CLM==1) then
+      clm(t)%slope_x = slope_x_pf(ll)
+      clm(t)%slope_y = slope_y_pf(ll)
+      else
+      clm(t)%slope_x = 0.0d0
+      clm(t)%slope_y = 0.0d0
+      end if
+      end do ! t
 
      !=== Loop over CLM tile space to set keys/constants from PF
      !    (watsat, residual sat, irrigation keys)
@@ -458,10 +549,68 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
 
            ! for beta and veg stress formulations
            clm(t)%beta_type          = beta_typepf
-           clm(t)%vegwaterstresstype = veg_water_stress_typepf
+           clm(t)%vegwaterstresstype = veg_water_stress_typepf  ! none, pressure, sat
+           clm(t)%rzwaterstress      = rz_water_stress_typepf   ! limit T by layer (1) or not (0, default)
            clm(t)%wilting_point      = wilting_pointpf
            clm(t)%field_capacity     = field_capacitypf
            clm(t)%res_sat            = res_satpf
+
+           ! for snow parameterization @RMM 2025
+           clm(t)%snow_partition_type  = snow_partition_typepf
+           clm(t)%tw_threshold         = tw_thresholdpf
+           clm(t)%thin_snow_damping    = thin_snow_dampingpf
+           clm(t)%thin_snow_threshold  = thin_snow_thresholdpf
+           clm(t)%snow_tcrit           = snow_tcritpf
+           clm(t)%snow_t_low           = snow_t_lowpf
+           clm(t)%snow_t_high          = snow_t_highpf
+           clm(t)%snow_transition_width = snow_transition_widthpf
+           clm(t)%dai_a                = dai_apf
+           clm(t)%dai_b                = dai_bpf
+           clm(t)%dai_c                = dai_cpf
+           clm(t)%dai_d                = dai_dpf
+           clm(t)%jennings_a           = jennings_apf
+           clm(t)%jennings_b           = jennings_bpf
+           clm(t)%jennings_g           = jennings_gpf
+
+           ! for SZA snow damping @RMM 2025
+           clm(t)%sza_snow_damping        = sza_snow_dampingpf
+           clm(t)%sza_damping_coszen_ref  = sza_damping_coszen_refpf
+           clm(t)%sza_damping_coszen_min  = sza_damping_coszen_minpf
+           clm(t)%coszen                  = 0.5d0  ! initialize to reference value
+
+           ! for snow albedo parameterization @RMM 2025
+           clm(t)%albedo_scheme        = albedo_schemepf
+           clm(t)%albedo_vis_new       = albedo_vis_newpf
+           clm(t)%albedo_nir_new       = albedo_nir_newpf
+           clm(t)%albedo_min           = albedo_minpf
+           clm(t)%albedo_decay_vis     = albedo_decay_vispf
+           clm(t)%albedo_decay_nir     = albedo_decay_nirpf
+           clm(t)%albedo_accum_a       = albedo_accum_apf
+           clm(t)%albedo_thaw_a        = albedo_thaw_apf
+
+           ! for frac_sno parameterization @RMM 2025
+           clm(t)%frac_sno_type        = frac_sno_typepf
+           clm(t)%frac_sno_roughness   = frac_sno_roughnesspf
+           clm(t)%frac_sno_roughness_min = frac_sno_roughness_minpf
+           clm(t)%frac_sno_roughness_max = frac_sno_roughness_maxpf
+           clm(t)%frac_sno_gamma_sza   = frac_sno_gamma_szapf
+           clm(t)%frac_sno_tau_sza     = frac_sno_tau_szapf
+
+           ! for snow age VIS/NIR separation @RMM 2025
+           clm(t)%snowage_tau0_vis        = snowage_tau0_vispf
+           clm(t)%snowage_tau0_nir        = snowage_tau0_nirpf
+           clm(t)%snowage_grain_growth_vis = snowage_grain_growth_vispf
+           clm(t)%snowage_grain_growth_nir = snowage_grain_growth_nirpf
+           clm(t)%snowage_dirt_soot_vis   = snowage_dirt_soot_vispf
+           clm(t)%snowage_dirt_soot_nir   = snowage_dirt_soot_nirpf
+           clm(t)%snowage_reset_factor    = snowage_reset_factorpf
+
+           ! for ET formulation improvements @RMM 2026
+           clm(t)%interception_fpi_max = interception_fpi_maxpf
+           clm(t)%fwet_exponent        = fwet_exponentpf
+           clm(t)%stomata_scheme       = stomata_schemepf
+           clm(t)%interception_scheme  = interception_schemepf
+           clm(t)%interception_tanh_alpha = interception_tanh_alphapf
 
            ! for irrigation
            clm(t)%irr_type           = irr_typepf
@@ -472,16 +621,18 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
            clm(t)%irr_threshold      = irr_thresholdpf     
            clm(t)%threshold_type     = irr_thresholdtypepf
  
-           ! set clm watsat, tksatu from PF porosity
+           ! set clm watsat, tksatu from PF porosity   @RMM moved this code up before clm_ini
            ! convert t to i,j index
-           i=tile(t)%col        
-           j=tile(t)%row
-           do k = 1, nlevsoi ! loop over clm soil layers (1->nlevsoi)
-              ! convert clm space to parflow space, note that PF space has ghost nodes
-              l = 1+i + j_incr*(j) + k_incr*(clm(t)%topo_mask(1)-(k-1))
-              clm(t)%watsat(k)       = porosity(l)
-              clm(t)%tksatu(k)       = clm(t)%tkmg(k)*0.57**clm(t)%watsat(k)
-           end do !k
+ !          i=tile(t)%col
+ !          j=tile(t)%row
+!           do k = 1, nlevsoi ! loop over clm soil layers (1->nlevsoi)
+!              ! convert clm space to parflow space, note that PF space has ghost nodes
+!              l = 1+i + j_incr*(j) + k_incr*(clm(t)%topo_mask(1)-(k-1))
+!              clm(t)%watsat(k)       = porosity(l)
+!              clm(t)%tksatu(k)       = clm(t)%tkmg(k)*0.57**clm(t)%watsat(k)
+!                print*,i,j
+!              print*, 'k=',k,'watsat=',clm(t)%watsat(k),'porosity=',porosity(l),'pf_poro=',pf_porosity(k)
+!           end do !k
 
         endif ! active/inactive
 
@@ -515,23 +666,24 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
   write(9919,*) "CLM day =", drv%da, "month =", drv%mo,"year =", drv%yr
   end if ! CLM log
 
-
+  
   !=== Read in the atmospheric forcing for off-line run
   !    (values no longer read by drv_getforce, passed from PF)
   !    (drv_getforce is modified to convert arrays from PF input to CLM space)
   !call drv_getforce(drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf,patm_pf,qatm_pf,istep_pf)
-  !BH: modification of drv_getforc to optionnaly force vegetation (LAI/SAI/Z0M/DISPLA): 
+  !BH: modification of drv_getforc to optionally force vegetation (LAI/SAI/Z0M/DISPLA): 
   !BH: this replaces values from clm_dynvegpar called previously from drv_clmini and 
   !BH: replaces values from drv_readvegpf
   call drv_getforce(drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf, &
-	patm_pf,qatm_pf,lai_pf,sai_pf,z0m_pf,displa_pf,istep_pf,clm_forc_veg)
+  patm_pf,qatm_pf,lai_pf,sai_pf,z0m_pf,displa_pf,istep_pf,clm_forc_veg)
+
   !=== Actual time loop
   !    (loop over CLM tile space, call 1D CLM at each point)
   do t = 1, drv%nch     
      clm(t)%qflx_infl_old       = clm(t)%qflx_infl
      clm(t)%qflx_tran_veg_old   = clm(t)%qflx_tran_veg
      if (clm(t)%planar_mask == 1) then
-        call clm_main (clm(t),drv%day,drv%gmt) 
+        call clm_main (clm(t),drv%day,drv%gmt,clm_forc_veg)
      else
      endif ! Planar mask
   enddo ! End of the space vector loop
@@ -545,7 +697,7 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
   !=== Call 2D output routine
   !     Only call for clm_dump_interval steps (not time units, integer units)
   !     Only call if write_CLM_binary is True
-  if (mod(dble(istep_pf),clm_dump_interval)==0)  then
+  if (mod((istep_pf),clm_dump_interval)==0)  then
      if (write_CLM_binary==1) then
 
         ! Call subroutine to open (2D-) output files
@@ -559,7 +711,7 @@ clm_last_rst,clm_daily_rst, pf_nlevsoi, pf_nlevlak)
 
      end if ! write_CLM_binary
   end if ! mod of istep and dump_interval
-
+  
 
   !=== Copy values from 2D CLM arrays to PF arrays for printing from PF (as Silo)
   do t=1,drv%nch

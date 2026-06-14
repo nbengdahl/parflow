@@ -1,14 +1,32 @@
-/*BHEADER*********************************************************************
-* (c) 1995   The Regents of the University of California
+/*BHEADER**********************************************************************
 *
-* See the file COPYRIGHT_and_DISCLAIMER for a complete copyright
-* notice, contact person, and disclaimer.
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
 *
-* $Revision: 1.23 $
-*********************************************************************EHEADER*/
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 
 #include "parflow.h"
-
 #include <float.h>
 
 /*--------------------------------------------------------------------------
@@ -56,6 +74,9 @@ void         PhaseSource(
   WellDataPhysical *well_data_physical;
   WellDataValue    *well_data_value;
 
+  ReservoirData         *reservoir_data = ProblemDataReservoirData(problem_data);
+  ReservoirDataPhysical *reservoir_data_physical;
+
   TimeCycleData    *time_cycle_data;
 
   Vector           *perm_x = ProblemDataPermeabilityX(problem_data);
@@ -69,7 +90,7 @@ void         PhaseSource(
 
   SubgridArray     *subgrids = GridSubgrids(grid);
 
-  Subgrid          *subgrid, *well_subgrid, *tmp_subgrid;
+  Subgrid          *subgrid, *well_subgrid, *tmp_subgrid, *reservoir_release_subgrid;
   Subvector        *px_sub, *py_sub, *pz_sub, *ps_sub;
 
   double           *data, *px, *py, *pz;
@@ -81,16 +102,15 @@ void         PhaseSource(
   int nx_p, ny_p, nz_p;
   int nx_ps, ny_ps, nz_ps;
 
-  int is, i, j, k, ip, ips;
+  int is, i, j, k;
 
-  /* Locals associated with wells */
+  /* Locals associated with wells and reservoirs*/
   int well;
   int cycle_number, interval_number;
-  double volume, flux, well_value;
+  double volume, flux, well_value, reservoir_value;
 
 // SGS FIXME why is this needed?
 #undef max
-  double weight = -FLT_MAX;
   double area_x, area_y, area_z, area_sum;
   double avg_x, avg_y, avg_z;
   double dx, dy, dz;
@@ -143,7 +163,7 @@ void         PhaseSource(
           data = SubvectorData(ps_sub);
           GrGeomInLoop(i, j, k, gr_solid, r, ix, iy, iz, nx, ny, nz,
           {
-            ips = SubvectorEltIndex(ps_sub, i, j, k);
+            int ips = SubvectorEltIndex(ps_sub, i, j, k);
 
             data[ips] = value;
           });
@@ -156,7 +176,6 @@ void         PhaseSource(
     case 1:
     {
       GrGeomSolid  *gr_domain;
-      double x, y, z;
       int function_type;
 
       dummy1 = (Type1*)(public_xtra->data[phase]);
@@ -189,8 +208,7 @@ void         PhaseSource(
           {
             GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
             {
-              ips = SubvectorEltIndex(ps_sub, i, j, k);
-              x = RealSpaceX(i, SubgridRX(subgrid));
+              int ips = SubvectorEltIndex(ps_sub, i, j, k);
               /* nonlinear case -div(p grad p) = f */
               data[ips] = -1.0;
             });
@@ -201,7 +219,7 @@ void         PhaseSource(
           {
             GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
             {
-              ips = SubvectorEltIndex(ps_sub, i, j, k);
+              int ips = SubvectorEltIndex(ps_sub, i, j, k);
               /* nonlinear case -div(p grad p) = f */
               data[ips] = -3.0;
             });
@@ -212,9 +230,9 @@ void         PhaseSource(
           {
             GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
             {
-              ips = SubvectorEltIndex(ps_sub, i, j, k);
-              x = RealSpaceX(i, SubgridRX(subgrid));
-              y = RealSpaceY(j, SubgridRY(subgrid));
+              int ips = SubvectorEltIndex(ps_sub, i, j, k);
+              double x = RealSpaceX(i, SubgridRX(subgrid));
+              double y = RealSpaceY(j, SubgridRY(subgrid));
               /* nonlinear case -div(p grad p) = f */
               data[ips] = -pow((3 * x * x * y * y + y * cos(x * y)), 2) - pow((2 * x * x * x * y + x * cos(x * y)), 2) - (x * x * x * y * y + sin(x * y) + 1) * (6 * x * y * y + 2 * x * x * x - (x * x + y * y) * sin(x * y));
             });
@@ -225,10 +243,9 @@ void         PhaseSource(
           {
             GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
             {
-              ips = SubvectorEltIndex(ps_sub, i, j, k);
-              x = RealSpaceX(i, SubgridRX(subgrid));
-              y = RealSpaceY(j, SubgridRY(subgrid));
-              z = RealSpaceZ(k, SubgridRZ(subgrid));
+              int ips = SubvectorEltIndex(ps_sub, i, j, k);
+              double x = RealSpaceX(i, SubgridRX(subgrid));
+              double y = RealSpaceY(j, SubgridRY(subgrid));
 
               data[ips] = -pow(3 * x * x * pow(y, 4) + 2 * x + y * cos(x * y) * cos(y), 2) - pow(4 * x * x * x * y * y * y + x * cos(x * y) * cos(y) - sin(x * y) * sin(y), 2) - (x * x * x * pow(y, 4) + x * x + sin(x * y) * cos(y) + 1) * (6 * x * pow(y, 4) + 2 - (x * x + y * y + 1) * sin(x * y) * cos(y) + 12 * x * x * x * y * y - 2 * x * cos(x * y) * sin(y));
             });
@@ -239,10 +256,10 @@ void         PhaseSource(
           {
             GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
             {
-              ips = SubvectorEltIndex(ps_sub, i, j, k);
-              x = RealSpaceX(i, SubgridRX(subgrid));
-              y = RealSpaceY(j, SubgridRY(subgrid));
-              z = RealSpaceZ(k, SubgridRZ(subgrid));
+              int ips = SubvectorEltIndex(ps_sub, i, j, k);
+              double x = RealSpaceX(i, SubgridRX(subgrid));
+              double y = RealSpaceY(j, SubgridRY(subgrid));
+              double z = RealSpaceZ(k, SubgridRZ(subgrid));
 
               data[ips] = x * y * z - time * time * (y * y * z * z + x * x * z * z + x * x * y * y);
             });
@@ -254,10 +271,10 @@ void         PhaseSource(
           {
             GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
             {
-              ips = SubvectorEltIndex(ps_sub, i, j, k);
-              x = RealSpaceX(i, SubgridRX(subgrid));
-              y = RealSpaceY(j, SubgridRY(subgrid));
-              z = RealSpaceZ(k, SubgridRZ(subgrid));
+              int ips = SubvectorEltIndex(ps_sub, i, j, k);
+              double x = RealSpaceX(i, SubgridRX(subgrid));
+              double y = RealSpaceY(j, SubgridRY(subgrid));
+              double z = RealSpaceZ(k, SubgridRZ(subgrid));
 
               data[ips] = x * y * z
                           - time * time * (y * y * z * z + x * x * z * z * 2.0 + x * x * y * y * 3.0);
@@ -354,39 +371,120 @@ void         PhaseSource(
 
           data = SubvectorElt(ps_sub, ix, iy, iz);
 
-          ip = 0;
-          ips = 0;
-          BoxLoopI2(i, j, k, ix, iy, iz, nx, ny, nz,
-                    ip, nx_p, ny_p, nz_p, 1, 1, 1,
-                    ips, nx_ps, ny_ps, nz_ps, 1, 1, 1,
+          int ip = 0;
+          int ips = 0;
+
+          if (WellDataPhysicalMethod(well_data_physical)
+              == FLUX_WEIGHTED)
           {
+            BoxLoopI2(i, j, k, ix, iy, iz, nx, ny, nz,
+                      ip, nx_p, ny_p, nz_p, 1, 1, 1,
+                      ips, nx_ps, ny_ps, nz_ps, 1, 1, 1,
+            {
+              double weight = (px[ip] / avg_x) * (area_x / area_sum)
+                              + (py[ip] / avg_y) * (area_y / area_sum)
+                              + (pz[ip] / avg_z) * (area_z / area_sum);
+              data[ips] += weight * flux;
+            });
+          }
+          else
+          {
+            double weight = -FLT_MAX;
             if (WellDataPhysicalMethod(well_data_physical)
                 == FLUX_STANDARD)
-            {
               weight = 1.0;
-            }
-            else if (WellDataPhysicalMethod(well_data_physical)
-                     == FLUX_WEIGHTED)
-            {
-              weight = (px[ip] / avg_x) * (area_x / area_sum)
-                       + (py[ip] / avg_y) * (area_y / area_sum)
-                       + (pz[ip] / avg_z) * (area_z / area_sum);
-            }
             else if (WellDataPhysicalMethod(well_data_physical)
                      == FLUX_PATTERNED)
-            {
               weight = 0.0;
-            }
-            data[ips] += weight * flux;
-          });
-
-          /* done with this temporay subgrid */
+            BoxLoopI2(i, j, k, ix, iy, iz, nx, ny, nz,
+                      ip, nx_p, ny_p, nz_p, 1, 1, 1,
+                      ips, nx_ps, ny_ps, nz_ps, 1, 1, 1,
+            {
+              data[ips] += weight * flux;
+            });
+          }
+          /* done with this temporary subgrid */
           FreeSubgrid(tmp_subgrid);
         }
       }
     }
   }  /* End well data */
+
+  if (ReservoirDataNumReservoirs(reservoir_data) > 0)
+  {
+    for (int reservoir = 0; reservoir < ReservoirDataNumReservoirs(reservoir_data); reservoir++)
+    {
+      reservoir_data_physical = ReservoirDataReservoirPhysical(reservoir_data, reservoir);
+      reservoir_release_subgrid = ReservoirDataPhysicalReleaseSubgrid(reservoir_data_physical);
+      reservoir_value = ReservoirDataPhysicalReleaseRate(reservoir_data_physical);
+      volume = ReservoirDataPhysicalSize(reservoir_data_physical);
+      flux = reservoir_value / (volume);
+      //If we are overfull need to release the rest of the flux
+      if (reservoir_data_physical->storage > reservoir_data_physical->max_storage)
+      {
+        flux = (reservoir_data_physical->storage - reservoir_data_physical->max_storage) / (volume);
+      }
+      ForSubgridI(is, subgrids)
+      {
+        subgrid = SubgridArraySubgrid(subgrids, is);
+
+        px_sub = VectorSubvector(perm_x, is);
+        py_sub = VectorSubvector(perm_y, is);
+        pz_sub = VectorSubvector(perm_z, is);
+
+        ps_sub = VectorSubvector(phase_source, is);
+
+        nx_p = SubvectorNX(ps_sub);
+        ny_p = SubvectorNY(ps_sub);
+        nz_p = SubvectorNZ(ps_sub);
+
+        nx_ps = SubvectorNX(ps_sub);
+        ny_ps = SubvectorNY(ps_sub);
+        nz_ps = SubvectorNZ(ps_sub);
+
+        if (reservoir_data_physical->storage > reservoir_data_physical->min_release_storage)
+        {
+          reservoir_data_physical = ReservoirDataReservoirPhysical(reservoir_data, reservoir);
+          /*  Get the intersection of the reservoir with the subgrid  */
+          if ((tmp_subgrid = IntersectSubgrids(subgrid, reservoir_release_subgrid)))
+          {
+            ReservoirDataPhysicalReleaseAmountInSolver(reservoir_data_physical) = flux * volume;
+
+            /*  If an intersection;  loop over it, and insert value  */
+            ix = SubgridIX(tmp_subgrid);
+            iy = SubgridIY(tmp_subgrid);
+            iz = SubgridIZ(tmp_subgrid);
+
+            nx = SubgridNX(tmp_subgrid);
+            ny = SubgridNY(tmp_subgrid);
+            nz = SubgridNZ(tmp_subgrid);
+
+            dx = SubgridDX(tmp_subgrid);
+            dy = SubgridDY(tmp_subgrid);
+            dz = SubgridDZ(tmp_subgrid);
+
+            px = SubvectorElt(px_sub, ix, iy, iz);
+            py = SubvectorElt(py_sub, ix, iy, iz);
+            pz = SubvectorElt(pz_sub, ix, iy, iz);
+
+            data = SubvectorElt(ps_sub, ix, iy, iz);
+
+            int ips = 0;
+            double weight = 1.0;
+
+            BoxLoopI1(i, j, k, ix, iy, iz, nx, ny, nz,
+                      ips, nx_ps, ny_ps, nz_ps, 1, 1, 1,
+            {
+              data[ips] += weight * flux;
+            });
+          }
+        }
+      }
+    }
+  }
 }
+
+
 
 
 /*--------------------------------------------------------------------------
@@ -471,7 +569,7 @@ PFModule  *PhaseSourceNewPublicXtra(
             NA_IndexToName(GlobalsPhaseNames, i));
     switch_name = GetString(key);
 
-    public_xtra->type[i] = NA_NameToIndex(type_na, switch_name);
+    public_xtra->type[i] = NA_NameToIndexExitOnError(type_na, switch_name, key);
 
     switch ((public_xtra->type[i]))
     {
@@ -516,13 +614,7 @@ PFModule  *PhaseSourceNewPublicXtra(
         switch_name = GetString(key);
 
         dummy1->function_type =
-          NA_NameToIndex(function_type_na, switch_name);
-
-        if (dummy1->function_type < 0)
-        {
-          InputError("Error: invalid function <%s> for key <%s>\n",
-                     switch_name, key);
-        }
+          NA_NameToIndexExitOnError(function_type_na, switch_name, key);
 
         (public_xtra->data[i]) = (void*)dummy1;
 
@@ -531,8 +623,7 @@ PFModule  *PhaseSourceNewPublicXtra(
 
       default:
       {
-        InputError("Error: invalid type <%s> for key <%s>\n",
-                   switch_name, key);
+        InputError("Invalid switch value <%s> for key <%s>", switch_name, key);
       }
     }     /* End case statement */
   }

@@ -1,30 +1,30 @@
-/*BHEADER*********************************************************************
- *
- *  Copyright (c) 1995-2009, Lawrence Livermore National Security,
- *  LLC. Produced at the Lawrence Livermore National Laboratory. Written
- *  by the Parflow Team (see the CONTRIBUTORS file)
- *  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 /*****************************************************************************
 *
 * Routines for handling ParFlow timing.
@@ -47,11 +47,12 @@ void  NewTiming()
   timing = ctalloc(TimingType, 1);
 
   /* The order of these registers need to be in sync with the defines
-   * found in solver.h
+   * found in timing.h
    */
 
   RegisterTiming("Solver Setup");
   RegisterTiming("Solver");
+  RegisterTiming("Richards Exclude 1st Time Step");
   RegisterTiming("Solver Cleanup");
   RegisterTiming("Matvec");
   RegisterTiming("PFSB I/O");
@@ -59,6 +60,8 @@ void  NewTiming()
   RegisterTiming("CLM");
   RegisterTiming("PFSOL Read");
   RegisterTiming("Clustering");
+  RegisterTiming("Netcdf I/O");
+  RegisterTiming("PDI I/O");
 #ifdef VECTOR_UPDATE_TIMING
   RegisterTiming("VectorUpdate");
 #endif
@@ -117,9 +120,9 @@ void  PrintTiming()
   amps_File file = NULL;
   amps_Invoice max_invoice;
 
-  double time_ticks[timing ->size];
-  double cpu_ticks[timing ->size];
-  double mflops[timing ->size];
+  double time_ticks[timing->size];
+  double cpu_ticks[timing->size];
+  double mflops[timing->size];
 
   int i;
 
@@ -135,9 +138,9 @@ void  PrintTiming()
 
   for (i = 0; i < (timing->size); i++)
   {
-    mflops[i] = time_ticks ?
-      ((timing->flops)[i] / (time_ticks[i] / AMPS_TICKS_PER_SEC)) / 1.0E6
-      : 0.0;
+    mflops[i] = time_ticks[i] ?
+                ((timing->flops)[i] / (time_ticks[i] / AMPS_TICKS_PER_SEC)) / 1.0E6
+                : 0.0;
   }
 
   IfLogging(0)
@@ -148,7 +151,7 @@ void  PrintTiming()
     {
       amps_Fprintf(file, "%s:\n", (timing->name)[i]);
       amps_Fprintf(file, "  wall clock time   = %f seconds\n",
-		   time_ticks[i] / AMPS_TICKS_PER_SEC);
+                   time_ticks[i] / AMPS_TICKS_PER_SEC);
       amps_Fprintf(file, "  wall MFLOPS = %f (%g)\n", mflops[i],
                    (timing->flops)[i]);
 #ifdef CPUTiming
@@ -177,11 +180,11 @@ void  PrintTiming()
     fprintf(file, "Timer,Time (s),MFLOPS (mops/s),FLOP (op)\n");
     for (i = 0; i < (timing->size); i++)
     {
-      fprintf(file, "%s,%f,%f,%g\n", timing->name[i], 
-	      time_ticks[i] / AMPS_TICKS_PER_SEC,
-	      mflops[i], (timing->flops)[i]);
+      fprintf(file, "%s,%f,%f,%g\n", timing->name[i],
+              time_ticks[i] / AMPS_TICKS_PER_SEC,
+              mflops[i], (timing->flops)[i]);
     }
-    
+
     fclose(file);
   }
 

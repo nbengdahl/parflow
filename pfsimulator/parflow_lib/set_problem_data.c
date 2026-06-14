@@ -1,30 +1,30 @@
-/*BHEADER*********************************************************************
- *
- *  Copyright (c) 1995-2009, Lawrence Livermore National Security,
- *  LLC. Produced at the Lawrence Livermore National Laboratory. Written
- *  by the Parflow Team (see the CONTRIBUTORS file)
- *  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 
 /*****************************************************************************
 *
@@ -49,12 +49,19 @@ typedef struct {
   PFModule  *permeability;
   PFModule  *porosity;
   PFModule  *wells;
+  PFModule *reservoirs;
   PFModule  *bc_pressure;
   PFModule  *specific_storage;  //sk
   PFModule  *x_slope;  //sk
   PFModule  *y_slope;  //sk
+  PFModule  *wc_x;
+  PFModule  *wc_y;
   PFModule  *mann;  //sk
   PFModule  *dz_mult;   //RMM
+  PFModule  *FBx;   //RMM
+  PFModule  *FBy;   //RMM
+  PFModule  *FBz;   //RMM
+
   PFModule  *real_space_z;
   int site_data_not_formed;
 
@@ -81,16 +88,23 @@ void          SetProblemData(
   PFModule      *permeability = (instance_xtra->permeability);
   PFModule      *porosity = (instance_xtra->porosity);
   PFModule      *wells = (instance_xtra->wells);
+  PFModule      *reservoirs = (instance_xtra->reservoirs);
   PFModule      *bc_pressure = (instance_xtra->bc_pressure);
   PFModule      *specific_storage = (instance_xtra->specific_storage);    //sk
   PFModule      *x_slope = (instance_xtra->x_slope);         //sk
   PFModule      *y_slope = (instance_xtra->y_slope);         //sk
+  PFModule      *wc_x = (instance_xtra->wc_x);
+  PFModule      *wc_y = (instance_xtra->wc_y);
   PFModule      *mann = (instance_xtra->mann);            //sk
-  PFModule      *dz_mult = (instance_xtra->dz_mult);                //sk
+  PFModule      *dz_mult = (instance_xtra->dz_mult);                //rmm
+  PFModule      *FBx = (instance_xtra->FBx);                //rmm
+  PFModule      *FBy = (instance_xtra->FBy);                //rmm
+  PFModule      *FBz = (instance_xtra->FBz);                //rmm
+
   PFModule      *real_space_z = (instance_xtra->real_space_z);
 
   /* Note: the order in which these modules are called is important */
-  PFModuleInvokeType(WellPackageInvoke, wells, (problem_data));
+
   if ((instance_xtra->site_data_not_formed))
   {
     PFModuleInvokeType(GeometriesInvoke, geometries, (problem_data));
@@ -121,6 +135,14 @@ void          SetProblemData(
                        (problem_data,
                         ProblemDataTSlopeY(problem_data),
                         ProblemDataPorosity(problem_data)));
+    PFModuleInvokeType(ChannelWidthInvoke, wc_x,
+                       (problem_data,
+                        ProblemDataChannelWidthX(problem_data),
+                        ProblemDataPorosity(problem_data)));
+    PFModuleInvokeType(ChannelWidthInvoke, wc_y,
+                       (problem_data,
+                        ProblemDataChannelWidthY(problem_data),
+                        ProblemDataPorosity(problem_data)));
     PFModuleInvokeType(ManningsInvoke, mann,                   //sk
                        (problem_data,
                         ProblemDataMannings(problem_data),
@@ -128,12 +150,27 @@ void          SetProblemData(
     PFModuleInvokeType(dzScaleInvoke, dz_mult,                   //RMM
                        (problem_data,
                         ProblemDataZmult(problem_data)));
+
+
     PFModuleInvokeType(realSpaceZInvoke, real_space_z,
                        (problem_data,
                         ProblemDataRealSpaceZ(problem_data)));
+
+    PFModuleInvokeType(FBxInvoke, FBx,                   //RMM
+                       (problem_data,
+                        ProblemDataFBx(problem_data)));
+    PFModuleInvokeType(FByInvoke, FBy,                   //RMM
+                       (problem_data,
+                        ProblemDataFBy(problem_data)));
+    PFModuleInvokeType(FBzInvoke, FBz,                   //RMM
+                       (problem_data,
+                        ProblemDataFBz(problem_data)));
+
+
     (instance_xtra->site_data_not_formed) = 0;
   }
-
+  PFModuleInvokeType(WellPackageInvoke, wells, (problem_data));
+  PFModuleInvokeType(ReservoirPackageInvoke, reservoirs, (problem_data));
   PFModuleInvokeType(BCPressurePackageInvoke, bc_pressure, (problem_data));
 }
 
@@ -207,11 +244,26 @@ PFModule  *SetProblemDataInitInstanceXtra(
     (instance_xtra->y_slope) =                                       //sk
                                PFModuleNewInstanceType(SlopeInitInstanceXtraInvoke,
                                                        ProblemYSlope(problem), (grid, grid2d));
+
+    (instance_xtra->wc_x) =
+      PFModuleNewInstanceType(ChannelWidthInitInstanceXtraInvoke,
+                              ProblemXChannelWidth(problem), (grid, grid2d));
+    (instance_xtra->wc_y) =
+      PFModuleNewInstanceType(ChannelWidthInitInstanceXtraInvoke,
+                              ProblemYChannelWidth(problem), (grid, grid2d));
+
     (instance_xtra->mann) =                                       //sk
                             PFModuleNewInstanceType(ManningsInitInstanceXtraInvoke,
                                                     ProblemMannings(problem), (grid, grid2d));
     (instance_xtra->dz_mult) =                                      //RMM
                                PFModuleNewInstance(ProblemdzScale(problem), ());
+
+    (instance_xtra->FBx) =                                      //RMM
+                           PFModuleNewInstance(ProblemFBx(problem), ());
+    (instance_xtra->FBy) =                                      //RMM
+                           PFModuleNewInstance(ProblemFBy(problem), ());
+    (instance_xtra->FBz) =                                      //RMM
+                           PFModuleNewInstance(ProblemFBz(problem), ());
 
     (instance_xtra->real_space_z) =
       PFModuleNewInstance(ProblemRealSpaceZ(problem), ());
@@ -220,6 +272,9 @@ PFModule  *SetProblemDataInitInstanceXtra(
 
     (instance_xtra->wells) =
       PFModuleNewInstance(ProblemWellPackage(problem), ());
+
+    (instance_xtra->reservoirs) =
+      PFModuleNewInstance(ProblemReservoirPackage(problem), ());
 
     (instance_xtra->bc_pressure) =
       PFModuleNewInstanceType(BCPressurePackageInitInstanceXtraInvoke,
@@ -242,11 +297,20 @@ PFModule  *SetProblemDataInitInstanceXtra(
                               (instance_xtra->x_slope), (grid, grid2d));        //sk
     PFModuleReNewInstanceType(SlopeInitInstanceXtraInvoke,
                               (instance_xtra->y_slope), (grid, grid2d));        //sk
+    PFModuleReNewInstanceType(ChannelWidthInitInstanceXtraInvoke,
+                              (instance_xtra->wc_x), (grid, grid2d));
+    PFModuleReNewInstanceType(ChannelWidthInitInstanceXtraInvoke,
+                              (instance_xtra->wc_y), (grid, grid2d));
     PFModuleReNewInstanceType(ManningsInitInstanceXtraInvoke,
                               (instance_xtra->mann), (grid, grid2d));        //sk
     PFModuleReNewInstance((instance_xtra->dz_mult), ());        //RMM
+    PFModuleReNewInstance((instance_xtra->FBx), ());        //RMM
+    PFModuleReNewInstance((instance_xtra->FBy), ());        //RMM
+    PFModuleReNewInstance((instance_xtra->FBz), ());        //RMM
+
     PFModuleReNewInstance((instance_xtra->real_space_z), ());
     PFModuleReNewInstance((instance_xtra->wells), ());
+    PFModuleReNewInstance((instance_xtra->reservoirs), ());
     PFModuleReNewInstanceType(BCPressurePackageInitInstanceXtraInvoke,
                               (instance_xtra->bc_pressure), (problem));
   }
@@ -271,6 +335,7 @@ void  SetProblemDataFreeInstanceXtra()
   {
     PFModuleFreeInstance(instance_xtra->bc_pressure);
     PFModuleFreeInstance(instance_xtra->wells);
+    PFModuleFreeInstance(instance_xtra->reservoirs);
 
     PFModuleFreeInstance(instance_xtra->geometries);
     PFModuleFreeInstance(instance_xtra->domain);
@@ -279,8 +344,14 @@ void  SetProblemDataFreeInstanceXtra()
     PFModuleFreeInstance(instance_xtra->specific_storage);       //sk
     PFModuleFreeInstance(instance_xtra->x_slope);       //sk
     PFModuleFreeInstance(instance_xtra->y_slope);       //sk
+    PFModuleFreeInstance(instance_xtra->wc_x);
+    PFModuleFreeInstance(instance_xtra->wc_y);
     PFModuleFreeInstance(instance_xtra->mann);       //sk
     PFModuleFreeInstance(instance_xtra->dz_mult);       // RMM
+    PFModuleFreeInstance(instance_xtra->FBx);       // RMM
+    PFModuleFreeInstance(instance_xtra->FBy);       // RMM
+    PFModuleFreeInstance(instance_xtra->FBz);       // RMM
+
     PFModuleFreeInstance(instance_xtra->real_space_z);
     tfree(instance_xtra);
   }

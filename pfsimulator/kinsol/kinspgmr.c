@@ -186,7 +186,7 @@ int KINSpgmr(void *kinsol_mem, int maxl, int maxlrst, int msbpre,
   }
 
   /*  Set Spgmr parameters appropriately for this package. The only choices
-   *  with repect to preconditioning are NONE or RIGHT. The other options are
+   *  with respect to preconditioning are NONE or RIGHT. The other options are
    *  not available as they were with CVODE/PVODE, where pretype and gstype
    *  were inputs to CVSpgmr. Here, the choice of NONE or RIGHT is implied
    *  by the  'NULL'ness of the pointer to the psolve routine.              */
@@ -483,10 +483,8 @@ static int KINSpgmrAtimesDQ(void *kinsol_mem, N_Vector v, N_Vector z)
   real sigma, sigma_inv;
   real sutsv, sq1norm, sign, vtv;
   KINMem kin_mem;
-  KINSpgmrMem kinspgmr_mem;
 
   kin_mem = (KINMem)kinsol_mem;
-  kinspgmr_mem = (KINSpgmrMem)lmem;
 
   /* scale the vector v ,   Du * v is put into vtemp1 */
   N_VProd(v, uscale, vtemp1);

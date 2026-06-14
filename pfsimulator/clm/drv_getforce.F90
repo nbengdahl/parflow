@@ -1,7 +1,7 @@
 !#include <misc.h>
 
-subroutine drv_getforce (drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf,	&
-			patm_pf,qatm_pf,lai_pf,sai_pf,z0m_pf,displa_pf,istep_pf,clm_forc_veg)
+subroutine drv_getforce (drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf, &
+  patm_pf,qatm_pf,lai_pf,sai_pf,z0m_pf,displa_pf,istep_pf,clm_forc_veg)
 
 !=========================================================================
 !
@@ -33,7 +33,7 @@ subroutine drv_getforce (drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf
   use drv_module          ! 1-D Land Model Driver variables
   use drv_tilemodule      ! Tile-space variables
   use clmtype             ! 1-D CLM variables
-  use clm_varcon, only : tfrz, tcrit
+  use clm_varcon, only : tfrz
   implicit none
 
 !=== Arguments ===========================================================
@@ -55,6 +55,8 @@ subroutine drv_getforce (drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf
   real(r8),intent(in) :: sai_pf((nx+2)*(ny+2)*3)            ! sai, passed from PF !BH
   real(r8),intent(in) :: z0m_pf((nx+2)*(ny+2)*3)            ! z0m, passed from PF !BH
   real(r8),intent(in) :: displa_pf((nx+2)*(ny+2)*3)         ! displacement height, passed from PF !BH
+  !real(r8),intent(in) :: slope_x_pf((nx+2)*(ny+2)*3)        ! slope in x direction, passed from PF !IJB
+  !real(r8),intent(in) :: slope_y_pf((nx+2)*(ny+2)*3)        ! slope in y direction, passed from PF !IJB
 
 
 !=== Local Variables =====================================================
@@ -87,6 +89,8 @@ subroutine drv_getforce (drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf
      clm(t)%forc_v          = v_pf(l)
      clm(t)%forc_pbot       = patm_pf(l)
      clm(t)%forc_q          = qatm_pf(l)
+     !clm(t)%slope_x         = slope_x_pf(l)
+     !clm(t)%slope_y         = slope_y_pf(l)
 	 ! BH: added the option for forcing or not the vegetation
 	if  (clm_forc_veg== 1) then 
 		clm(t)%elai	        = lai_pf(l)
@@ -108,8 +112,9 @@ subroutine drv_getforce (drv,tile,clm,nx,ny,sw_pf,lw_pf,prcp_pf,tas_pf,u_pf,v_pf
      !(Set upper limit of air temperature for snowfall at 275.65K.
      ! This cut-off was selected based on Fig. 1, Plate 3-1, of Snow
      ! Hydrology (1956)).
+     ! @RMM 2025: Now uses configurable snow_tcrit from clm1d struct
      if (prcp > 0.) then
-        if(clm(t)%forc_t > (tfrz + tcrit))then
+        if(clm(t)%forc_t > (tfrz + clm(t)%snow_tcrit))then
            clm(t)%itypprc   = 1
            clm(t)%forc_rain = prcp
            clm(t)%forc_snow = 0.

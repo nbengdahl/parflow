@@ -1,30 +1,30 @@
-/*BHEADER*********************************************************************
- *
- *  Copyright (c) 1995-2009, Lawrence Livermore National Security,
- *  LLC. Produced at the Lawrence Livermore National Laboratory. Written
- *  by the Parflow Team (see the CONTRIBUTORS file)
- *  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 /*****************************************************************************
 *
 * Routines for manipulating vector structures.
@@ -33,7 +33,6 @@
 *****************************************************************************/
 
 #include "parflow.h"
-#include "vector.h"
 
 #ifdef HAVE_SAMRAI
 #include "SAMRAI/hier/PatchDescriptor.h"
@@ -42,11 +41,12 @@
 
 using namespace SAMRAI;
 
+static int samrai_vector_ids[5][2048];
+
 #endif
 
 #include <stdlib.h>
-
-static int samrai_vector_ids[5][2048];
+#include <string.h>
 
 /*--------------------------------------------------------------------------
  * NewVectorCommPkg:
@@ -56,7 +56,7 @@ CommPkg  *NewVectorCommPkg(
                            Vector *    vector,
                            ComputePkg *compute_pkg)
 {
-  CommPkg     *new_commpkg;
+  CommPkg     *new_commpkg = NULL;
 
 
   Grid *grid = VectorGrid(vector);
@@ -123,7 +123,7 @@ VectorUpdateCommHandle  *InitVectorUpdate(
   }
 #endif
 
-  CommHandle *amps_com_handle;
+  CommHandle *amps_com_handle = NULL;
   if (grid_type == invalid_grid_type)
   {
 #ifdef SHMEM_OBJECTS
@@ -169,7 +169,8 @@ VectorUpdateCommHandle  *InitVectorUpdate(
 #endif
   }
 
-  VectorUpdateCommHandle *vector_update_comm_handle = ctalloc(VectorUpdateCommHandle, 1);
+  VectorUpdateCommHandle *vector_update_comm_handle = talloc(VectorUpdateCommHandle, 1);
+  memset(vector_update_comm_handle, 0, sizeof(VectorUpdateCommHandle));
   vector_update_comm_handle->vector = vector;
   vector_update_comm_handle->comm_handle = amps_com_handle;
 
@@ -237,18 +238,21 @@ static Vector  *NewTempVector(
 
   (void)nc;
 
-  new_vector = ctalloc(Vector, 1);  /*address of storage is assigned to the ptr "new_" of type Vector, which is also
-                                     *                      the return value of this function */
+  new_vector = talloc(Vector, 1);        /* address of storage is assigned to the ptr "new_" of type Vector,
+                                          *   which is also the return value of this function                */
+  memset(new_vector, 0, sizeof(Vector));
 
-  (new_vector->subvectors) = ctalloc(Subvector *, GridNumSubgrids(grid));    /* 1st arg.: variable type;
-                                                                              *                                                               2nd arg.: # of elements to be allocated*/
+  (new_vector->subvectors) = talloc(Subvector *, GridNumSubgrids(grid));    /* 1st arg.: variable type;
+                                                                             * 2nd arg.: # of elements to be allocated*/
+  memset(new_vector->subvectors, 0, GridNumSubgrids(grid) * sizeof(Subvector *));
 
   data_size = 0;
 
   VectorDataSpace(new_vector) = NewSubgridArray();
   ForSubgridI(i, GridSubgrids(grid))
   {
-    new_sub = ctalloc(Subvector, 1);
+    new_sub = talloc(Subvector, 1);
+    memset(new_sub, 0, sizeof(Subvector));
 
     subgrid = GridSubgrid(grid, i);
 
@@ -268,17 +272,18 @@ static Vector  *NewTempVector(
 
     n = SubvectorNX(new_sub) * SubvectorNY(new_sub) * SubvectorNZ(new_sub);
 
-    data_size = n;
+    data_size += n;
 
     VectorSubvector(new_vector, i) = new_sub;
   }
 
-  (new_vector->data_size) = data_size;    /* data_size is sie of data inclduing ghost points */
+  SizeOfVector(new_vector) = data_size;    /* data_size is size of data including ghost points */
 
   VectorGrid(new_vector) = grid;  /* Grid that this vector is on */
 
   VectorSize(new_vector) = GridSize(grid);  /* VectorSize(vector) is vector->size, which is the total number of coefficients */
 
+  VectorNumGhost(new_vector) = num_ghost;  /* number of ghost cells for this vector */
 
 #ifdef HAVE_SAMRAI
   new_vector->samrai_id = -1;
@@ -313,7 +318,7 @@ static void     AllocateVectorData(
 
     SubvectorDataSize(subvector) = data_size;
 
-    double  *data = amps_CTAlloc(double, data_size);
+    double  *data = ctalloc_amps(double, data_size);
     VectorSubvector(vector, i)->allocated = TRUE;
 
     SubvectorData(VectorSubvector(vector, i)) = data;
@@ -341,9 +346,9 @@ Vector  *NewVectorType(
 
   new_vector = NewTempVector(grid, nc, num_ghost);
 
+#ifdef HAVE_SAMRAI
   enum ParflowGridType grid_type = invalid_grid_type;
 
-#ifdef HAVE_SAMRAI
   switch (type)
   {
     case vector_cell_centered:
@@ -403,10 +408,9 @@ Vector  *NewVectorType(
   tbox::Pointer < hier::Variable > variable;
 #else
   type = vector_non_samrai;
-  grid_type = invalid_grid_type;
 #endif
 
-  new_vector->type = type;
+  VectorType(new_vector) = type; /* type of this vector */
 
 
   switch (type)
@@ -634,7 +638,7 @@ void FreeSubvector(Subvector *subvector)
 {
   if (subvector->allocated)
   {
-    tfree(SubvectorData(subvector));
+    tfree_amps(SubvectorData(subvector));
   }
   tfree(subvector);
 }
@@ -666,53 +670,56 @@ void FreeTempVector(Vector *vector)
 void     FreeVector(
                     Vector *vector)
 {
-  switch (vector->type)
+  if (vector)
   {
+    switch (vector->type)
+    {
 #ifdef HAVE_SAMRAI
-    case vector_cell_centered:
-    case vector_cell_centered_2D:
-    case vector_side_centered_x:
-    case vector_side_centered_y:
-    case vector_side_centered_z:
-    case vector_clm_topsoil:
-    case vector_met:
-    {
-      ParflowGridType grid_type = flow_3D_grid_type;
-      if (vector->type == vector_cell_centered_2D)
+      case vector_cell_centered:
+      case vector_cell_centered_2D:
+      case vector_side_centered_x:
+      case vector_side_centered_y:
+      case vector_side_centered_z:
+      case vector_clm_topsoil:
+      case vector_met:
       {
-        grid_type = surface_2D_grid_type;
+        ParflowGridType grid_type = flow_3D_grid_type;
+        if (vector->type == vector_cell_centered_2D)
+        {
+          grid_type = surface_2D_grid_type;
+        }
+
+        if (!vector->boundary_fill_refine_algorithm.isNull())
+        {
+          vector->boundary_fill_refine_algorithm.setNull();
+          vector->boundary_fill_schedule.setNull();
+        }
+
+        tbox::Pointer < hier::PatchHierarchy > hierarchy(GlobalsParflowSimulation->getPatchHierarchy(grid_type));
+        tbox::Pointer < hier::PatchLevel > level(hierarchy->getPatchLevel(0));
+
+        level->deallocatePatchData(vector->samrai_id);
+
+        tbox::Pointer < hier::PatchDescriptor > patch_descriptor(hierarchy->getPatchDescriptor());
+        patch_descriptor->removePatchDataComponent(vector->samrai_id);
+
+
+        samrai_vector_ids[grid_type][vector->table_index] = 0;
+        break;
       }
-
-      if (!vector->boundary_fill_refine_algorithm.isNull())
-      {
-        vector->boundary_fill_refine_algorithm.setNull();
-        vector->boundary_fill_schedule.setNull();
-      }
-
-      tbox::Pointer < hier::PatchHierarchy > hierarchy(GlobalsParflowSimulation->getPatchHierarchy(grid_type));
-      tbox::Pointer < hier::PatchLevel > level(hierarchy->getPatchLevel(0));
-
-      level->deallocatePatchData(vector->samrai_id);
-
-      tbox::Pointer < hier::PatchDescriptor > patch_descriptor(hierarchy->getPatchDescriptor());
-      patch_descriptor->removePatchDataComponent(vector->samrai_id);
-
-
-      samrai_vector_ids[grid_type][vector->table_index] = 0;
-      break;
-    }
 #endif
-    case vector_non_samrai:
-    {
-      break;
+      case vector_non_samrai:
+      {
+        break;
+      }
+
+      default:
+        // SGS abort here
+        fprintf(stderr, "Invalid variable type\n");
     }
 
-    default:
-      // SGS abort here
-      fprintf(stderr, "Invalid variable type\n");
+    FreeTempVector(vector);
   }
-
-  FreeTempVector(vector);
 }
 
 
@@ -781,8 +788,6 @@ void    InitVectorAll(
   Subvector  *v_sub;
   double     *vp;
 
-  Subgrid    *subgrid;
-
   int ix_v, iy_v, iz_v;
   int nx_v, ny_v, nz_v;
 
@@ -792,8 +797,6 @@ void    InitVectorAll(
 
   ForSubgridI(i_s, GridSubgrids(grid))
   {
-    subgrid = GridSubgrid(grid, i_s);
-
     v_sub = VectorSubvector(v, i_s);
 
     ix_v = SubvectorIX(v_sub);
@@ -924,8 +927,11 @@ void    InitVectorRandom(
     BoxLoopI1(i, j, k, ix, iy, iz, nx, ny, nz,
               iv, nx_v, ny_v, nz_v, 1, 1, 1,
     {
+#if defined(PARFLOW_HAVE_CUDA) || defined(PARFLOW_HAVE_KOKKOS)
+      vp[iv] = dev_drand48();
+#else
       vp[iv] = drand48();
+#endif
     });
   }
 }
-

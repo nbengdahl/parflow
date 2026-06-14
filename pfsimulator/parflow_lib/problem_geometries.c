@@ -1,38 +1,42 @@
-/*BHEADER*********************************************************************
- *
- *  Copyright (c) 1995-2009, Lawrence Livermore National Security,
- *  LLC. Produced at the Lawrence Livermore National Laboratory. Written
- *  by the Parflow Team (see the CONTRIBUTORS file)
- *  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2026, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 /*****************************************************************************
 *
 *****************************************************************************/
 
 #include "parflow.h"
+#include "parflow_netcdf.h"
 
 #include <string.h>
 #include <assert.h>
+
+#define PFBFile 0
+#define NCFile  1
 
 /*--------------------------------------------------------------------------
  * Structures
@@ -43,6 +47,8 @@ typedef struct indicator_data {
   int                     *indicators;  //pointer to dynamic object
   char                    *filename;
   struct  indicator_data  *next_indicator_data;
+
+  int file_type;
 
   NameArray indicator_na;
 } IndicatorData;
@@ -103,6 +109,7 @@ void resetBoundary(Vector *vector, const double value, const int ghosts)
 
     const int nx_f = SubvectorNX(subvector);
     const int ny_f = SubvectorNY(subvector);
+    const int nz_f = SubvectorNZ(subvector);
 
     double *data = SubvectorElt(subvector, ix_all, iy_all, iz_all);
 
@@ -205,7 +212,24 @@ void           Geometries(
   while (current_indicator_data != NULL)
   {
     InitVectorAll(tmp_indicator_field, -1.0);
-    ReadPFBinary((current_indicator_data->filename), tmp_indicator_field);
+
+    switch (current_indicator_data->file_type)
+    {
+      case PFBFile:
+      {
+        ReadPFBinary((current_indicator_data->filename), tmp_indicator_field);
+        break;
+      }
+
+      case NCFile:
+      {
+        int time_step = 0;
+        int dimensionality = 3;
+        ReadPFNC((current_indicator_data->filename), tmp_indicator_field, "indicator", time_step, dimensionality);
+        break;
+      }
+    }
+
     handle = InitVectorUpdate(tmp_indicator_field, VectorUpdateAll);
     FinalizeVectorUpdate(handle);
 
@@ -319,7 +343,7 @@ PFModule   *GeometriesNewPublicXtra()
   NameArray geom_input_na;
 
   char *geom_input_names;
-  char key[NA_MAX_KEY_LENGTH];
+  char key[IDB_MAX_KEY_LEN];
 
   char *intype_name;
 
@@ -330,7 +354,7 @@ PFModule   *GeometriesNewPublicXtra()
   /*----------------------------------------------------------
    * The name array to map names to switch values
    *----------------------------------------------------------*/
-  switch_na = NA_NewNameArray("IndicatorField SolidFile Box");
+  switch_na = NA_NewNameArray("IndicatorField IndicatorFieldNC SolidFile Box");
 
 
   public_xtra = ctalloc(PublicXtra, 1);
@@ -358,18 +382,14 @@ PFModule   *GeometriesNewPublicXtra()
     sprintf(key, "GeomInput.%s.InputType",
             NA_IndexToName(geom_input_na, i));
     intype_name = GetString(key);
+    intype = NA_NameToIndexExitOnError(switch_na, intype_name, key);
 
     num_new_solids = 0;
-
-    if ((intype = NA_NameToIndex(switch_na, intype_name)) < 0)
-    {
-      InputError("Error: Geometry input type <%s> is not invalid for key <%s>",
-                 intype_name, key);
-    }
 
     switch (intype)
     {
       case 0:    /* indicator field */
+      case 1:    /* indicator field nc */
       {
         char *indicator_names;
         int solids_index;
@@ -406,6 +426,9 @@ PFModule   *GeometriesNewPublicXtra()
           new_indicator_data->indicators[solids_index] = GetInt(key);
         }
 
+        /* 0 for PFBFile or 1 for NCFile */
+        (new_indicator_data->file_type) = intype;
+
         /* read in the number of characters in the filename for the indicator field */
 
         sprintf(key, "Geom.%s.FileName", NA_IndexToName(geom_input_na, i));
@@ -431,7 +454,7 @@ PFModule   *GeometriesNewPublicXtra()
         break;
       }
 
-      case 1:    /* `.pfsol' file */
+      case 2:    /* `.pfsol' file */
       {
         BeginTiming(PFSOLReadTimingIndex);
         num_new_solids = GeomReadSolids(&new_solids,
@@ -472,7 +495,7 @@ PFModule   *GeometriesNewPublicXtra()
         break;
       }
 
-      case 2:    /* box */
+      case 3:    /* box */
       {
         double xl, yl, zl, xu, yu, zu;
 

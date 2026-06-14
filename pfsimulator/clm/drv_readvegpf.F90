@@ -53,6 +53,12 @@ subroutine drv_readvegpf (drv,grid,tile,clm)
   ! Open and read 1-D  CLM input file
   open(9, file=drv%vegpf, form='formatted', status = 'old',action='read')
 
+
+  ! Setup defaults; this prevents use of unitialized state
+  do t=1,drv%nch 
+     clm(t)%irrig = 0  !default - no irrigation
+  end do
+
   ioval=0
   do while (ioval == 0)
 
@@ -80,6 +86,20 @@ subroutine drv_readvegpf (drv,grid,tile,clm)
      if (vname == 'vw')        call drv_vpr(drv,tile,clm%vw)
      if (vname == 'irrig')     call drv_vpi(drv,tile,clm%irrig)    ! @IMF
      if (vname == 'bkmult')    call drv_vpr(drv,tile,clm%bkmult)   ! @CAP 2014-02-24
+     if (vname == 'vcmx25') then                                     ! @RMM 2026 PFT photosyn
+        call drv_vpr(drv,tile,clm%vcmx25)
+        do t=1,drv%nch
+           clm(t)%photosyn_custom = .true.
+        end do
+     endif
+     if (vname == 'c3psn')     call drv_vpr(drv,tile,clm%c3psn)    ! @RMM 2026 PFT photosyn
+     if (vname == 'mp')        call drv_vpr(drv,tile,clm%mp)       ! @RMM 2026 PFT photosyn
+     if (vname == 'bp')        call drv_vpr(drv,tile,clm%bp)       ! @RMM 2026 PFT photosyn
+     if (vname == 'qe25')      call drv_vpr(drv,tile,clm%qe25)     ! @RMM 2026 PFT photosyn
+     if (vname == 'folnmx')    call drv_vpr(drv,tile,clm%folnmx)   ! @RMM 2026 PFT photosyn
+     if (vname == 'g1_medlyn')  call drv_vpr(drv,tile,clm%g1_medlyn) ! @RMM 2026 Medlyn stomata
+     if (vname == 'clump')      call drv_vpr(drv,tile,clm%clump_index) ! @RMM 2026 canopy clumping
+     if (vname == 'omega_max')  call drv_vpr(drv,tile,clm%omega_max)   ! @RMM 2026 compensatory RWU
      ! initialize lakpoi from itypwat variable
 
      do t=1,drv%nch 

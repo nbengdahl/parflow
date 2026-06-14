@@ -1,33 +1,34 @@
-/*BHEADER*********************************************************************
- *
- *  Copyright (c) 1995-2009, Lawrence Livermore National Security,
- *  LLC. Produced at the Lawrence Livermore National Laboratory. Written
- *  by the Parflow Team (see the CONTRIBUTORS file)
- *  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 
 #include "parflow.h"
 #include "globals.h"
+#include "stdbool.h"
 
 /*--------------------------------------------------------------------------
  * Structures
@@ -44,9 +45,6 @@ typedef void InstanceXtra;
  *--------------------------------------------------------------------------*/
 void realSpaceZ(ProblemData *problem_data, Vector *rsz)
 {
-  PFModule       *this_module = ThisPFModule;
-  PublicXtra     *public_xtra = (PublicXtra*)PFModulePublicXtra(this_module);
-
   Grid           *grid = VectorGrid(rsz);
 
   SubgridArray   *subgrids = GridSubgrids(grid);
@@ -65,10 +63,9 @@ void realSpaceZ(ProblemData *problem_data, Vector *rsz)
   int r;
   int is, i, j, k, l, ips = 0;
 
-
   GrGeomSolid *gr_domain = ProblemDataGrDomain(problem_data);
 
-
+  k = 0; //@RMM bug fix for processor outside active domain
 
   /*-----------------------------------------------------------------------
    * real_space_z
@@ -132,21 +129,35 @@ void realSpaceZ(ProblemData *problem_data, Vector *rsz)
       int *breaking_out_PV_visiting = 0;
       GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, l, nx, ny, 1,
       {
-        //we need one index of level k which is inside the domain
+        //we need one index of level l which is inside the domain
         ips = SubvectorEltIndex(rsz_sub, i, j, k);
 
         breaking_out_PV_visiting = PV_visiting;
+        // Can't just do a break since GrGeom loops are multiple levels deep.
         goto  breakout;
       });
 
 breakout:;
+
+      /*
+       * If we broke out of GrGeomInLoop we found point in
+       * domain on this rank.   If not then nothing
+       * was in domain.
+       */
+
+      // Free temporary space allocated in GrGeomInLoop if needed since we did a goto.
       if (breaking_out_PV_visiting)
       {
         tfree(breaking_out_PV_visiting - 1);
       }
-      z += 0.5 * RealSpaceDZ(SubgridRZ(subgrid)) * dz_data[ips];
-      zz[k - iz] = z;
-      z += 0.5 * RealSpaceDZ(SubgridRZ(subgrid)) * dz_data[ips];
+
+      // GrGeomInLoop didn't find any points in domain
+      if (k - iz < nz)
+      {
+        z += 0.5 * RealSpaceDZ(SubgridRZ(subgrid)) * dz_data[ips];
+        zz[k - iz] = z;
+        z += 0.5 * RealSpaceDZ(SubgridRZ(subgrid)) * dz_data[ips];
+      }
     }
 
     /* Send partial sum to rank above current rank */
@@ -251,3 +262,74 @@ int  realSpaceZSizeOfTempData()
 {
   return 0;
 }
+
+/** @brief Calculate index space z given a z in real space.
+ *
+ * This function takes a real space z and calculates the index space z. It will always return a value
+ * if the real space z value lives on the real domain, even if it does not live on this rank.
+ *
+ * This function does a reduction communication and must be called on all ranks.
+ *
+ * @param real_space_z The real space z
+ * @param problem_data Problem data instance
+ *
+ * @return The index space calculated
+ */
+int CalculateIndexSpaceZ(double real_space_z, ProblemData* problem_data)
+{
+  Grid           *grid = VectorGrid(problem_data->rsz);
+  SubgridArray   *subgrids = GridSubgrids(grid);
+  Subgrid        *subgrid;
+  int subgrid_index;
+  int index_space_z;
+  GrGeomSolid *gr_domain = problem_data->gr_domain;
+  bool found_index_space_z = false;
+
+  //We need this number to always be larger than the number of z indices, hence the choice of INT_MAX
+  index_space_z = INT_MAX;
+  ForSubgridI(subgrid_index, subgrids)
+  {
+    subgrid = SubgridArraySubgrid(subgrids, subgrid_index);
+    Subvector  *real_space_zs_subvector = VectorSubvector(problem_data->rsz, subgrid_index);
+    double dz = SubgridDZ(subgrid);
+    int ix = SubgridIX(subgrid);
+    int iy = SubgridIY(subgrid);
+    int iz = SubgridIZ(subgrid);
+    int nx = 1;
+    int ny = 1;
+    int nz = SubgridNZ(subgrid);
+    int r = SubgridRZ(subgrid);
+    double* real_space_zs_data = SubvectorData(real_space_zs_subvector);
+    double* dz_mult_data = SubvectorData(VectorSubvector(problem_data->dz_mult, subgrid_index));
+    double cell_center, cell_height;
+    //I think I can set ix and iy to 0 because the dzscale does not vary in x or y
+    int i, j, k = 0;
+    double current_z;
+    //This loop goes up through the domain until the cell top is higher than the real space z provided
+    GrGeomInLoop(i, j, k, gr_domain, r, ix, iy, iz, nx, ny, nz,
+    {
+      int index = SubvectorEltIndex(real_space_zs_subvector, i, j, k);
+
+      //Real space z will give us the cell center not the cell bottom. So we correct for that
+      cell_center = real_space_zs_data[index];
+      cell_height = 0.5 * dz_mult_data[index] * dz;
+      current_z = (cell_center + 0.5 * cell_height);
+      if (!found_index_space_z && (current_z > real_space_z))
+      {
+        // inside well, going up we have found index where well starts
+        index_space_z = k;
+        found_index_space_z = TRUE;
+      }
+    });
+  };
+  //Right now doing this reduction is needed to avoid seg faults later but if someone knows a
+  //good default value to return that might be possible. Tried with -1 and checking for that but
+  //ended up needing a reduction later anyways
+#ifdef PARFLOW_HAVE_MPI
+  amps_Invoice index_space_z_invoice = amps_NewInvoice("%i", &index_space_z);
+  amps_AllReduce(amps_CommWorld, index_space_z_invoice, amps_Min);
+  amps_FreeInvoice(index_space_z_invoice);
+#endif
+  return index_space_z;
+}
+

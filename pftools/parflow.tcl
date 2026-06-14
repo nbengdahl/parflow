@@ -1,6 +1,6 @@
 #BHEADER**********************************************************************
 #
-#  Copyright (c) 1995-2009, Lawrence Livermore National Security,
+#  Copyright (c) 1995-2024, Lawrence Livermore National Security,
 #  LLC. Produced at the Lawrence Livermore National Laboratory. Written
 #  by the Parflow Team (see the CONTRIBUTORS file)
 #  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
@@ -29,7 +29,7 @@
 package provide parflow 1.0
 
 namespace eval Parflow {
-    variable PFDB 
+    variable PFDB
     array set PFDB {FileVersion -1}
 
     variable IsArchUnix
@@ -44,7 +44,7 @@ namespace eval Parflow {
 
     #
     # Fix up filenames for Win32
-    # 
+    #
     proc FixupFilename { filename } {
 
 	if $Parflow::IsArchUnix {
@@ -52,20 +52,20 @@ namespace eval Parflow {
 	} {
 	    regsub -all \\\\ $filename "/" new_filename
 	}
-    
+
 	return $new_filename
     }
 
     variable PARFLOW_DIR [Parflow::FixupFilename $::env(PARFLOW_DIR)]
-    
-    namespace export pfget pfset pfrun pfundist
+
+    namespace export pfget pfset pfunset pfrun pfundist
 
     namespace export pfStructuredPoints
 
-    # 
+    #
     # Export names from the shared library
     #
-    namespace export pfloadsds 
+    namespace export pfloadsds
     namespace export pfsavesds
     namespace export pfbfcvel
     namespace export pfgetsubbox
@@ -76,6 +76,8 @@ namespace eval Parflow {
     namespace export pfdist
     namespace export pfsave
     namespace export pfvtksave
+    namespace export pfpatchysolid
+    namespace export pfsolidfmtconvert
     namespace export pfgetelt
     namespace export pfgridtype
     namespace export pfgetgrid
@@ -141,7 +143,7 @@ namespace eval Parflow {
     namespace export pfflintslaw
     namespace export pfflintslawfit
     namespace export pfflintslawbybasin
- 
+
     namespace export pfprintdata
     namespace export pfprintdiff
     namespace export pfprintlist
@@ -153,7 +155,7 @@ namespace eval Parflow {
 }
 
 #
-# Output a string that can containg blanks etc to a file
+# Output a string that can containing blanks etc to a file
 #
 proc Parflow::PFWriteComplexString {file string} {
     puts $file [string length $string]
@@ -163,7 +165,7 @@ proc Parflow::PFWriteComplexString {file string} {
 #
 # Write an array from a file
 #
-proc Parflow::PFWriteArray {file name} { 
+proc Parflow::PFWriteArray {file name} {
     upvar $name a
 
     puts $file [array size a]
@@ -183,7 +185,7 @@ proc Parflow::pfwritedb {name} {
     #
 
     set file [open [FixupFilename $name.pfidb] "w"]
-    
+
     foreach i "Parflow::PFDB" {
 	PFWriteArray $file $i
     }
@@ -196,12 +198,20 @@ proc Parflow::pfwritedb {name} {
 # Sets a value in the database
 #
 proc Parflow::pfset { key value } {
-    
+
     set Parflow::PFDB($key) "$value"
 }
 
 #
-# Retreives a value from the DataBase
+# Sets a value in the database
+#
+proc Parflow::pfunset { key } {
+
+    unset Parflow::PFDB($key)
+}
+
+#
+# Retrieves a value from the DataBase
 #
 proc Parflow::pfget { key } {
 
@@ -246,8 +256,8 @@ proc Parflow::pfrun { runname args } {
 
     #
     # Write out the current state of the database
-    # 
-    
+    #
+
     pfwritedb $runname
 
     if [pfexists Process.Topology.P] {
@@ -267,7 +277,7 @@ proc Parflow::pfrun { runname args } {
     } {
 	set R 1
     }
-    
+
     set NumProcs [expr $P * $Q * $R]
 
     # Run parflow
@@ -287,8 +297,6 @@ proc Parflow::pfrun { runname args } {
 #
 proc Parflow::pfundist { runname } {
 
-    global PARFLOW_DIR
-
     # first check if this is a single file if so just work on it
     if [file exists $runname.dist] {
 	file delete $runname.dist
@@ -298,7 +306,7 @@ proc Parflow::pfundist { runname } {
 
     if [file exists $runname.00000] {
 	set files [lsort [glob -nocomplain $runname.\[0-9\]*]]
-	
+
 	file delete $runname
 	eval exec /bin/cat $files > $runname
 	eval file delete $files
@@ -313,25 +321,21 @@ proc Parflow::pfundist { runname } {
     set filelist ""
 
     foreach  postfix ".00000 .dist" {
-	append filelist [glob -nocomplain $root.perm_x.*$postfix] " "
-	append filelist [glob -nocomplain $root.perm_y.*$postfix] " "
-	append filelist [glob -nocomplain $root.perm_z.*$postfix] " "
-	append filelist [glob -nocomplain $root.porosity.*$postfix] " "
-    
-	append filelist [glob -nocomplain $root.press.*$postfix] " "
-	append filelist [glob -nocomplain $root.density.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.satur.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.satur.?.?????.*$postfix] " "
+
+	foreach filetype "density satur temp et obf mask" {
+	    append filelist [glob -nocomplain $root.$filetype.?????.*$postfix] " "
+	}
+
+	foreach filetype "satur phasex phasey phasez" {
+	    append filelist [glob -nocomplain $root.$filetype.?.?????.*$postfix] " "
+	}
+
 	append filelist [glob -nocomplain $root.concen.??.?????.*$postfix] " "
 	append filelist [glob -nocomplain $root.concen.?.??.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.phasex.?.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.phasey.?.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.phasez.?.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.temp.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.et.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.obf.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.mask.?????.*$postfix] " "
-	append filelist [glob -nocomplain $root.mask.*$postfix] " "
+	
+	foreach filetype "perm_x perm_y perm_z porosity specific_storage press mask velx vely velz top_patch top_zindex alpha sres ssat n" {
+	    append filelist [glob -nocomplain $root.$filetype.*$postfix] " "
+	}
     }
 
     foreach i $filelist {
@@ -363,4 +367,3 @@ proc Parflow::pfreloadall {} {
 	}
     }
 }
-

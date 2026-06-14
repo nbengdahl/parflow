@@ -557,7 +557,7 @@ static int KINSolInit(void *kinmem, integer Neq,
 
   if (etaflag == ETACHOICE1)
     /* this value ALWAYS used for Choice 1 */
-    ealpha = ONE + HALF * RSqrt(FIVE);
+    ealpha = (ONE + RSqrt(FIVE)) / TWO;
 
   if (etaflag == ETACHOICE2)
   {
@@ -1054,7 +1054,7 @@ static int KINConstraint(KINMem kin_mem)
 static void KINForcingTerm(KINMem kin_mem, real fnormp)
 {
   real eta_max = POINT9, eta_min = POINTOHOHOHONE,
-    eta_safe = 0.5, linmodel_norm;
+       eta_safe = 0.5, linmodel_norm;
 
   if (etaflag == ETACHOICE1)        /* Choice 1 forcing terms. */
 
@@ -1230,7 +1230,7 @@ static int  KINLineSearch(KINMem kin_mem, real *fnormp, real *f1normp,
 {
   int ret, ivio, nfesav, rladjust = 0;
   real pnorm, ratio, ratio1, slpi, rlmin, rlength, rl, rlmax, rldiff;
-  real rltmp, rlprev, pt1trl, f1nprv, f1lo, rllo, rlincr, alpha, beta;
+  real rltmp, rlprev = 0.0, pt1trl, rllo, rlincr, alpha, beta;
   real alpha_cond, beta_cond;
 
   *maxStepTaken = FALSE;
@@ -1313,7 +1313,6 @@ static int  KINLineSearch(KINMem kin_mem, real *fnormp, real *f1normp,
     if (rltmp > HALF * rl)
       rltmp = HALF * rl;
     rlprev = rl;
-    f1nprv = (*f1normp);
     pt1trl = POINT1 * rl;
     rl = MAX(pt1trl, rltmp);
     rladjust++;
@@ -1332,7 +1331,6 @@ static int  KINLineSearch(KINMem kin_mem, real *fnormp, real *f1normp,
       do
       {
         rlprev = rl;
-        f1nprv = *f1normp;
         rl = MIN(TWO * rl, rlmax);
         rladjust++;
         N_VLinearSum(ONE, uu, rl, pp, unew);
@@ -1353,11 +1351,6 @@ static int  KINLineSearch(KINMem kin_mem, real *fnormp, real *f1normp,
     {
       rllo = MIN(rl, rlprev);
       rldiff = ABS(rlprev - rl);
-
-      if (rl < rlprev)
-        f1lo = *f1normp;
-      else
-        f1lo = f1nprv;
 
       do
       {
@@ -1380,7 +1373,6 @@ static int  KINLineSearch(KINMem kin_mem, real *fnormp, real *f1normp,
         {
           rllo = rl;
           rldiff = rldiff - rlincr;
-          f1lo = *f1normp;
         }
       }
       while (*f1normp > alpha_cond ||

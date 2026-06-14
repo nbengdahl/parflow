@@ -1,30 +1,30 @@
-/*BHEADER*********************************************************************
- *
- *  Copyright (c) 1995-2009, Lawrence Livermore National Security,
- *  LLC. Produced at the Lawrence Livermore National Laboratory. Written
- *  by the Parflow Team (see the CONTRIBUTORS file)
- *  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
- *
- *  This file is part of Parflow. For details, see
- *  http://www.llnl.gov/casc/parflow
- *
- *  Please read the COPYRIGHT file or Our Notice and the LICENSE file
- *  for the GNU Lesser General Public License.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License (as published
- *  by the Free Software Foundation) version 2.1 dated February 1999.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
- *  and conditions of the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- *  USA
- **********************************************************************EHEADER*/
+/*BHEADER**********************************************************************
+*
+*  Copyright (c) 1995-2024, Lawrence Livermore National Security,
+*  LLC. Produced at the Lawrence Livermore National Laboratory. Written
+*  by the Parflow Team (see the CONTRIBUTORS file)
+*  <parflow@lists.llnl.gov> CODE-OCEC-08-103. All rights reserved.
+*
+*  This file is part of Parflow. For details, see
+*  http://www.llnl.gov/casc/parflow
+*
+*  Please read the COPYRIGHT file or Our Notice and the LICENSE file
+*  for the GNU Lesser General Public License.
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License (as published
+*  by the Free Software Foundation) version 2.1 dated February 1999.
+*
+*  This program is distributed in the hope that it will be useful, but
+*  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the terms
+*  and conditions of the GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU Lesser General Public
+*  License along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+*  USA
+**********************************************************************EHEADER*/
 /*****************************************************************************
 * NewDatabox and FreeDatabox
 *
@@ -33,6 +33,7 @@
 *****************************************************************************/
 
 #include "databox.h"
+#include "general.h"
 #include <stdlib.h>
 
 /*-----------------------------------------------------------------------
@@ -40,9 +41,9 @@
  *-----------------------------------------------------------------------*/
 
 Databox         *NewDatabox(
-                            int    nx,
-                            int    ny,
-                            int    nz,
+                            size_t nx,
+                            size_t ny,
+                            size_t nz,
                             double x,
                             double y,
                             double z,
@@ -59,9 +60,9 @@ Databox         *NewDatabox(
 
 
 Databox         *NewDataboxDefault(
-                                   int    nx,
-                                   int    ny,
-                                   int    nz,
+                                   size_t nx,
+                                   size_t ny,
+                                   size_t nz,
                                    double x,
                                    double y,
                                    double z,
@@ -75,10 +76,10 @@ Databox         *NewDataboxDefault(
   int j;
   int k;
 
-  if ((new_databox = (Databox*)calloc(1, sizeof(Databox))) == NULL)
+  if ((new_databox = ctalloc(Databox, 1)) == NULL)
     return((Databox*)NULL);
 
-  if ((DataboxCoeffs(new_databox) = (double*)calloc((nx * ny * nz), sizeof(double))) == NULL)
+  if ((DataboxCoeffs(new_databox) = ctalloc(double, (nx * ny * nz))) == NULL)
   {
     free(new_databox);
     return((Databox*)NULL);
@@ -114,6 +115,8 @@ Databox         *NewDataboxDefault(
 /*-----------------------------------------------------------------------
  * print Databox grid info
  *-----------------------------------------------------------------------*/
+
+#ifdef PARFLOW_HAVE_TCL
 
 void            GetDataboxGrid(
                                Tcl_Interp *interp,
@@ -161,6 +164,8 @@ void            GetDataboxGrid(
 
   Tcl_ListObjAppendElement(interp, result, list_obj);
 }
+
+#endif // PARFLOW_HAVE_TCL
 
 
 // IMF
